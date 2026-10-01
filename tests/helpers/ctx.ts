@@ -94,6 +94,8 @@ export interface CtxOptions {
   readonly fs?: SandboxedFs;
   readonly reads?: ToolCtx['reads'];
   readonly jobs?: JobRegistry;
+  /** Replaces the default always-approve seam (e.g. with a real broker). */
+  readonly requestApproval?: ToolCtx['requestApproval'];
 }
 
 export function makeCtx(options: CtxOptions = {}): ToolCtx {
@@ -106,10 +108,12 @@ export function makeCtx(options: CtxOptions = {}): ToolCtx {
     shell: recordingShell(),
     jobs: options.jobs ?? recordingJobs(),
     ...(options.reads === undefined ? {} : { reads: options.reads }),
-    requestApproval: async (action) => {
-      approvals.push(action);
-      return options.approve ?? true;
-    },
+    requestApproval:
+      options.requestApproval ??
+      (async (action) => {
+        approvals.push(action);
+        return options.approve ?? true;
+      }),
     log: () => undefined,
   };
 }

@@ -1,8 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M4 — bash + job registry** (tiến trình con thật, ring buffer, kill theo process
-group). Chưa có vòng lặp agent.
+Trạng thái: **M5 — sandbox + approval** (policy gate, `ctx.fs` bị nhốt thật, approval fail-closed,
+audit mọi quyết định, seam OS sandbox). Chưa có vòng lặp agent.
 
 ## Lệnh
 
@@ -38,6 +38,13 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `src/jobs/types.ts` | hợp đồng `JobRegistry`, `JobSnapshot`, `JobOutput`, `JobNotice` | M4 |
 | `src/shell/bash.ts` | `ShellRunner` thật: stdout/stderr tách riêng, cwd, cancel giết process group, cap output có thông báo | M4 |
 | `src/tools/bash.ts` | `bash` + `job_output` + `job_list` + `job_kill` | M4 |
+| `src/fs/local.ts` | backend đĩa thật: ghi **atomic** (temp + fsync + rename), `list`, `exists` | M5 |
+| `src/policy/sandbox.ts` | `checkWrite` (một nguồn luật duy nhất) + `createSandboxPolicy` (allow/deny/ask, audit từng quyết định) | M5 |
+| `src/policy/sandboxed-fs.ts` | `ctx.fs` bị nhốt: chặn ghi ngoài workspace ở tầng port, ném `E_POLICY_DENIED` | M5 |
+| `src/policy/approval.ts` | approval broker **fail-closed**: không có answerer / answerer lỗi / quá hạn ⇒ deny, có audit | M5 |
+| `src/policy/runtime.ts` | `createSandboxRuntime` ghép gate + fs + shell + approval + audit; `createLogAuditSink` đẩy audit vào session log | M5 |
+| `src/shell/sandboxed.ts` | `ShellRunner` có policy: read-only từ chối chạy, có OS backend thì bọc, công bố `confinement` | M5 |
+| `src/shell/os-sandbox.ts` | seam OS sandbox + backend macOS seatbelt (`buildSeatbeltProfile`) + `probe()` | M5 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
 | `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
 
@@ -104,7 +111,16 @@ Tổng ~6 request nhỏ, `max_tokens` bị chặn.
 
 ## Chưa có (theo milestone)
 
-M5 sandbox + approval cho `ctx.fs`/`ctx.shell` · M6 token meter/compaction + attachment (để có
-`fs_read_image`) · M7 subagent + skills + MCP · M8 CLI + vòng lặp agent.
+M6 token meter/compaction + attachment (để có `fs_read_image`) · M7 subagent + skills + MCP ·
+M8 CLI + vòng lặp agent.
+
+### Sandbox: điều gì đã thật, điều gì chưa
+
+- **Ghi file**: nhốt thật, trong process. `createSandboxedFs` chặn mọi mutation ngoài workspace +
+  temp grant, kể cả khi tool bỏ qua gate. Có test trên đĩa thật.
+- **Shell**: chỉ nhốt thật khi mount `OsSandboxBackend`. Trên máy này
+  `/usr/bin/sandbox-exec` **tồn tại nhưng bị từ chối apply** (`sandbox_apply: Operation not
+  permitted`), nên `probe()` trả `available: false` và `shell.confinement` là `unconfined` trừ khi
+  bạn mount backend. Đừng giả định shell đã bị nhốt — hãy đọc `confinement`.
 
 Xem `docs/ARCHITECTURE.md` để hiểu luồng dữ liệu và `docs/blueprint.md` cho kế hoạch đầy đủ.

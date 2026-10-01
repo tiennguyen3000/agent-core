@@ -147,6 +147,34 @@ USER…) cộng `envPassthrough` của deployment. Secret của agent không t�
 **`ShellRunner` là đường đơn giản.** Tool `bash` đi qua job registry; `createBashShellRunner`
 phục vụ các tool cần stdout/stderr tách riêng, cũng kill theo process group khi bị huỷ.
 
+## Sandbox và approval (M5)
+
+**Một luật, hai lần thi hành.** `checkWrite()` trong `src/policy/sandbox.ts` là nguồn luật duy nhất;
+`createSandboxPolicy` dùng nó để *quyết định*, `createSandboxedFs` dùng nó để *thi hành*. Vì vậy
+một quyết định và việc thực thi không thể lệch nhau, và một tool lách qua gate vẫn không ghi được
+ra ngoài. Ghi ngoài workspace ⇒ gate trả `deny` (`E_POLICY_DENIED`); nếu deployment đặt
+`outsideWorkspace: 'ask'` thì gate trả `ask` và quyền quyết định thuộc về con người — nhưng tool
+`fs_write` vẫn giữ kiểm tra workspace riêng của nó, nên **cả hai lớp** phải đồng ý.
+
+**Đọc không bị giới hạn.** Sandbox nhốt *hiệu ứng*, không nhốt việc đọc: `fs.read` luôn được phép,
+đúng như hành vi đọc cục bộ. Chỉ mutation mới bị kiểm.
+
+**Approval fail-closed.** `createApprovalBroker` chỉ cho phép khi có câu trả lời rõ ràng: không có
+answerer ⇒ deny ngay; answerer ném lỗi ⇒ deny; hết hạn trước khi trả lời ⇒ deny. Mỗi yêu cầu và
+mỗi quyết định đều phát ra audit (`approval.request` / `approval.decision` với `by: 'user' | 'policy'`).
+
+**Audit là một phần của log.** `policy.decision` (kể cả các quyết định *allow*) được thêm vào union
+`SessionEvent`; `createLogAuditSink` chuyển audit event thành `SessionEventInput` (bỏ `at` để log tự
+đóng dấu). Nhờ vậy câu hỏi "vì sao lần ghi này được phép?" trả lời được sau khi sự việc xảy ra.
+
+**Shell: phải nói thật về mức độ nhốt.** Trong process không thể nhốt một lệnh shell — chỉ OS mới
+làm được. `createSandboxedShellRunner` từ chối chạy trong `read-only`, bọc lệnh bằng
+`OsSandboxBackend` khi có, và **công bố** `confinement: 'os-sandbox' | 'unconfined'` để deployment
+không phải đoán. Backend seatbelt (`buildSeatbeltProfile`) deny mặc định rồi chỉ cho ghi vào
+workspace + temp grant. Trên máy phát triển này `sandbox-exec` tồn tại nhưng apply bị từ chối
+(`sandbox_apply: Operation not permitted`), nên `probe()` trả `available: false` — và đó chính là
+lý do seam này tồn tại thay vì một giả định.
+
 ## Quy ước
 
 - Mọi import nội bộ dùng đuôi `.js` (NodeNext ESM).

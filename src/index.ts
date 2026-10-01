@@ -97,6 +97,7 @@ export type {
 } from './tools/registry.js';
 export { ToolErrorCode, ToolRegistry, ToolTimeoutError } from './tools/registry.js';
 export type { ToolErrorCodeValue, ToolRegistryOptions } from './tools/registry.js';
+export { toolErrorCodeFrom } from './tools/registry.js';
 
 export {
   DEFAULT_ENV_ALLOWLIST,
@@ -123,6 +124,48 @@ export {
   createJobOutputTool,
 } from './tools/bash.js';
 export type { BashToolConfig } from './tools/bash.js';
+
+export { createLocalFs } from './fs/local.js';
+export type { LocalFsOptions } from './fs/local.js';
+
+export { createSandboxPolicy, checkWrite, toAbsolute } from './policy/sandbox.js';
+export type {
+  PolicyAuditEvent,
+  SandboxPolicyOptions,
+  SandboxScope,
+  WriteVerdict,
+} from './policy/sandbox.js';
+export { SandboxViolationError, createSandboxedFs } from './policy/sandboxed-fs.js';
+export type { SandboxedFsOptions } from './policy/sandboxed-fs.js';
+export { createApprovalBroker } from './policy/approval.js';
+export type {
+  ApprovalAnswerer,
+  ApprovalAuditEvent,
+  ApprovalBroker,
+  ApprovalBrokerOptions,
+  ApprovalRequest,
+} from './policy/approval.js';
+export { createLogAuditSink, createSandboxRuntime } from './policy/runtime.js';
+export type {
+  AuditEvent,
+  SandboxRuntime,
+  SandboxRuntimeOptions,
+} from './policy/runtime.js';
+
+export { buildSeatbeltProfile, createSeatbeltBackend } from './shell/os-sandbox.js';
+export type {
+  OsSandboxBackend,
+  OsSandboxContext,
+  OsSandboxProbe,
+  SeatbeltBackendOptions,
+  WrappedCommand,
+} from './shell/os-sandbox.js';
+export { createSandboxedShellRunner } from './shell/sandboxed.js';
+export type {
+  Confinement,
+  SandboxedShellRunner,
+  SandboxedShellRunnerOptions,
+} from './shell/sandboxed.js';
 
 export { ReadTracker } from './tools/observation.js';
 export type { ReadStatus } from './tools/observation.js';

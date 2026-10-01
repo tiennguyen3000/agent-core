@@ -47,6 +47,16 @@ export interface ShellRunner {
     command: string,
     options: { readonly cwd: string; readonly signal: AbortSignal },
   ): Promise<ShellResult>;
+  /**
+   * Optional argv entry point (M5). An OS sandbox wraps a command as
+   * `sandbox-exec -p <profile> bash -lc <command>`, which cannot be expressed
+   * as a shell string without re-quoting it, so the wrapper needs this.
+   */
+  execArgv?(
+    file: string,
+    args: readonly string[],
+    options: { readonly cwd: string; readonly signal: AbortSignal },
+  ): Promise<ShellResult>;
 }
 
 /**
@@ -101,9 +111,44 @@ export const ToolErrorCode = {
   NoMatch: 'E_NO_MATCH',
   AmbiguousMatch: 'E_AMBIGUOUS_MATCH',
   PathEscape: 'E_PATH_ESCAPE',
+  Access: 'E_ACCESS',
 } as const;
 
 export type ToolErrorCodeValue = (typeof ToolErrorCode)[keyof typeof ToolErrorCode];
+
+/**
+ * Node filesystem errnos mapped onto this repository's stable codes, so a
+ * `fs_*` failure reaches the model as something it can act on rather than a
+ * raw errno.
+ */
+const FS_ERRNO_CODES: Readonly<Record<string, ToolErrorCodeValue>> = {
+  ENOENT: ToolErrorCode.NotFound,
+  ENOTDIR: ToolErrorCode.NotFound,
+  EACCES: ToolErrorCode.Access,
+  EPERM: ToolErrorCode.Access,
+  ELOOP: ToolErrorCode.Access,
+  EISDIR: ToolErrorCode.IsDirectory,
+  EROFS: ToolErrorCode.PolicyDenied,
+  ENAMETOOLONG: ToolErrorCode.BadArgs,
+};
+
+const KNOWN_TOOL_CODES = new Set<string>(Object.values(ToolErrorCode));
+
+/** Turns a thrown error into a stable tool code (invariant 7). */
+export function toolErrorCodeFrom(error: unknown): ToolErrorCodeValue {
+  const raw =
+    typeof error === 'object' && error !== null
+      ? (error as { code?: unknown }).code
+      : undefined;
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return ToolErrorCode.ToolFailed;
+  }
+  const mapped = FS_ERRNO_CODES[raw];
+  if (mapped !== undefined) {
+    return mapped;
+  }
+  return KNOWN_TOOL_CODES.has(raw) ? (raw as ToolErrorCodeValue) : ToolErrorCode.ToolFailed;
+}
 
 interface ToolDefBase<A> {
   readonly name: string;
@@ -292,7 +337,10 @@ export class ToolRegistry {
       if (ctx.signal.aborted) {
         return failure(ToolErrorCode.Cancelled, `"${name}" was cancelled.`);
       }
-      return failure(ToolErrorCode.ToolFailed, `"${name}" failed: ${errorMessage(error)}`);
+      // A sandbox violation or a filesystem errno becomes an actionable code
+      // instead of an opaque failure (invariant 7).
+      const code = toolErrorCodeFrom(error);
+      return failure(code, `"${name}" failed: ${errorMessage(error)}`);
     }
   }
 

@@ -17,8 +17,11 @@ Test phải chạy **offline**, không dùng timer, không gọi mạng. Chạy 
   `src/policy/gate.ts` là **hợp đồng cứng**: chỉ được thêm field, không đổi tên, không xoá.
 - Mọi **mutation** fs và mọi lệnh shell/network phải đi qua `PolicyGate`. Tool khai báo
   `requiresApproval: 'never'` là tool không cần hỏi duyệt (ví dụ đọc file, todo) nên không gọi
-  gate; việc thi hành sandbox cho read/write nằm ở cổng `ctx.fs` / `ctx.shell` (M5), không phải ở
-  `dispatch`. Đừng gán `'never'` cho tool có side effect.
+  gate. Từ M5 việc thi hành đã có thật: `createSandboxedFs` chặn ghi ngoài workspace ở tầng port
+  (kể cả khi không có quyết định nào), và `createSandboxedShellRunner` từ chối chạy trong
+  read-only. **Nhưng**: shell chỉ thật sự bị nhốt khi có `OsSandboxBackend` — kiểm tra
+  `shell.confinement`, đừng giả định. Đừng gán `'never'` cho tool có side effect.
+- Mọi quyết định policy/approval phải đi vào audit sink (`policy.decision`, `approval.*`).
 - Mọi hành vi ghi vào log dưới dạng `SessionEvent`; không giữ state song song.
 - Không in secret ra log/stdout.
 - Import nội bộ dùng đuôi `.js`. Không dùng `any`.
@@ -28,8 +31,8 @@ Test phải chạy **offline**, không dùng timer, không gọi mạng. Chạy 
 
 1. Log là nguồn sự thật; transcript luôn được replay.
 2. Compaction che, không xoá.
-3. Mọi mutation fs + mọi lệnh shell/network đi qua `PolicyGate` (tool `'never'` không hỏi duyệt;
-   sandbox cho read/write thuộc `ctx.fs`/`ctx.shell` ở M5).
+3. Mọi mutation fs + mọi lệnh shell/network đi qua `PolicyGate`; mutation còn bị chặn lần hai ở
+   `ctx.fs`. Shell chỉ được nhốt thật khi có OS sandbox backend (kiểm tra `shell.confinement`).
 4. Schema tool sinh từ zod, không viết tay bản thứ hai.
 5. Cancel lan truyền tới provider, tool, tiến trình con; không rò tiến trình.
 6. Budget được thực thi: `maxSteps`, `tokenBudget`, `wallClockMs`, `toolTimeout`.

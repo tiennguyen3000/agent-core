@@ -119,6 +119,20 @@ export interface TurnEndEvent {
   readonly at: number;
 }
 
+/**
+ * Every sandbox decision is recorded, including the allowed ones: the audit
+ * trail answers "why was this write permitted?" after the fact (M5).
+ */
+export interface PolicyDecisionEvent {
+  readonly seq: number;
+  readonly t: 'policy.decision';
+  readonly requestId: string;
+  readonly action: Action;
+  readonly outcome: 'allow' | 'deny' | 'ask';
+  readonly reason?: string;
+  readonly at: number;
+}
+
 export type SessionEvent =
   | SessionCreatedEvent
   | TurnStartEvent
@@ -129,6 +143,7 @@ export type SessionEvent =
   | ToolResultEvent
   | ApprovalRequestEvent
   | ApprovalDecisionEvent
+  | PolicyDecisionEvent
   | CompactionEvent
   | TurnEndEvent;
 

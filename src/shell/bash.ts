@@ -80,9 +80,12 @@ export function createBashShellRunner(options: BashShellRunnerOptions = {}): She
     return `${head}\n... (${String(omitted)} characters omitted) ...\n${tail}`;
   };
 
-  return {
-    async exec(command, execOptions): Promise<ShellResult> {
-      const child = spawnImpl(shell, ['-lc', command], {
+  const run = async (
+    file: string,
+    args: readonly string[],
+    execOptions: { readonly cwd: string; readonly signal: AbortSignal },
+  ): Promise<ShellResult> => {
+      const child = spawnImpl(file, [...args], {
         cwd: execOptions.cwd,
         env: childEnv,
         detached: process.platform !== 'win32',
@@ -133,6 +136,10 @@ export function createBashShellRunner(options: BashShellRunnerOptions = {}): She
         cancelEscalation?.();
         execOptions.signal.removeEventListener('abort', onAbort);
       }
-    },
+  };
+
+  return {
+    exec: (command, execOptions) => run(shell, ['-lc', command], execOptions),
+    execArgv: (file, args, execOptions) => run(file, args, execOptions),
   };
 }
