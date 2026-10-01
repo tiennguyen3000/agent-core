@@ -55,6 +55,24 @@ thay vì nhận một chuỗi stack trace.
 không import `src/tools`. `src/policy` không import gì ngoài type. Nhờ vậy M1–M8 chỉ việc cắm
 implementation vào sau các port đã có.
 
+## Tầng provider (M1)
+
+`DeepSeekProvider` nói chuyện với endpoint chat-completions tương thích OpenAI. Ba quy tắc:
+
+**Retry chỉ trước delta đầu tiên.** 429/5xx/lỗi mạng được thử lại với backoff luỹ thừa + jitter
+(`baseRetryDelayMs`, `jitterRatio`, tôn trọng `Retry-After`). Khi một lần thử đã phát delta cho
+caller thì replay sẽ nhân đôi nội dung, nên lỗi kết thúc bằng `stop: error` và caller quyết định.
+
+**Huỷ không phải lỗi.** `request.signal` được truyền vào `fetch`; nhánh huỷ phát
+`stop: cancelled` + `E_CANCELLED` và **không** gọi `onError`, để telemetry lỗi không bị nhiễu bởi
+thao tác người dùng.
+
+**Không rò credential.** Mọi chuỗi lấy từ response hoặc từ exception đều đi qua
+`redactSecret(text, apiKey)` trước khi vào message hay `lastError` (invariant 9).
+
+Bộ mã lỗi ổn định: `E_AUTH`, `E_BAD_REQUEST`, `E_MODEL_NOT_FOUND`, `E_CONTEXT_OVERFLOW`,
+`E_RATE_LIMITED`, `E_SERVER`, `E_NETWORK`, `E_TIMEOUT`, `E_BAD_STREAM`, `E_CANCELLED`.
+
 ## Quy ước
 
 - Mọi import nội bộ dùng đuôi `.js` (NodeNext ESM).

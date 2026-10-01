@@ -2,10 +2,12 @@
  * Public surface of the agent core.
  *
  * M0 ships contracts plus the two pure pieces that make them verifiable:
- * `project()` (session projection) and `FakeProvider`. Implementations of the
- * ports — DeepSeek provider (M1), durable log (M2), filesystem and search tools
- * (M3), bash and jobs (M4), sandbox and approval (M5), context management (M6),
- * subagents, skills and MCP (M7), CLI (M8) — plug in behind these types.
+ * `project()` (session projection) and `FakeProvider`. M1 adds the real
+ * DeepSeek provider (streaming SSE, retry, stable error codes) and its SSE
+ * parser. Implementations of the ports — durable log (M2), filesystem and
+ * search tools (M3), bash and jobs (M4), sandbox and approval (M5), context
+ * management (M6), subagents, skills and MCP (M7), CLI (M8) — plug in behind
+ * these types.
  */
 
 export type {
@@ -24,6 +26,21 @@ export type {
 
 export { FakeProvider, textScript } from './llm/fake.js';
 export type { FakeScript } from './llm/fake.js';
+
+export { DeepSeekProvider, createDeepSeekProvider } from './llm/deepseek.js';
+export type { DeepSeekProviderOptions, FetchLike } from './llm/deepseek.js';
+
+export { parseSseStream } from './llm/sse.js';
+export type { SseEvent } from './llm/sse.js';
+
+export {
+  ProviderError,
+  ProviderErrorCode,
+  describeError,
+  isRetryableStatus,
+  redactSecret,
+} from './llm/errors.js';
+export type { ProviderErrorCodeValue, ProviderErrorOptions } from './llm/errors.js';
 
 export type {
   ApprovalDecisionEvent,

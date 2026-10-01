@@ -35,6 +35,16 @@ export interface Message {
   readonly toolCalls?: readonly ToolCall[];
 }
 
+/**
+ * Token accounting for one model request.
+ *
+ * `inputTokens` counts only the *uncached* prompt tokens; `cacheReadTokens`
+ * counts the prefix the provider served from its prompt cache (DeepSeek reports
+ * these as `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`), and
+ * `cacheWriteTokens` counts tokens written into the cache. Reasoners report
+ * their hidden tokens in `reasoningTokens`, which providers usually bill as
+ * output.
+ */
 export interface Usage {
   readonly inputTokens: number;
   readonly outputTokens: number;
