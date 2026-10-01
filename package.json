@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
+    "test:live": "vitest run tests/live",
     "test:watch": "vitest"
   },
   "dependencies": {

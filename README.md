@@ -52,9 +52,32 @@ Retry chỉ xảy ra **trước khi delta đầu tiên của một lần thử �
 `stop: error` để caller tự quyết định, tránh nhân đôi nội dung. Huỷ giữa stream kết thúc bằng
 `stop: cancelled` (không gọi `onError`).
 
+### Live smoke test (tuỳ chọn, cần mạng)
+
+`pnpm test` **không bao giờ** gọi mạng. Muốn xác nhận wire format thật:
+
+```bash
+DEEPSEEK_API_KEY=sk-... DEEPSEEK_LIVE_MODEL=deepseek-flash pnpm test:live
+```
+
+File `tests/live/deepseek-smoke.live.spec.ts` tự skip khi thiếu `DEEPSEEK_API_KEY`. Nó kiểm tra 4
+giả định mà bộ test offline không thể xác nhận: khung SSE thật, tên field `usage` +
+`stream_options.include_usage`, `prompt_cache_hit_tokens`, và shape của `tool_calls` stream.
+Tổng ~6 request nhỏ, `max_tokens` bị chặn.
+
+**Đã chạy thật và xanh 5/5** với `deepseek-flash` (xem số đo, phát hiện và phần còn để ngỏ ở
+[`docs/live-findings.md`](docs/live-findings.md)). Ba kết luận đáng nhớ:
+
+- `inputTokens + cacheReadTokens` = đúng tổng prompt, ổn định qua nhiều lần gọi → mapping cache
+  không tính trùng.
+- `reasoning_tokens` **nằm trong** `completion_tokens`, nên chi phí output bao gồm reasoning ẩn.
+- Cache prefix của DeepSeek dùng chung giữa các process và **tỉ lệ hit phụ thuộc độ lớn prefix**
+  (65% với prompt 591 token, nhưng ~99% với prefix hàng trăm nghìn token) — đây là lý do định
+  lượng được cho lời khuyên "giữ prefix ổn định".
+
 ## Chưa có (theo milestone)
 
-M2 log bền vững (JSONL/fsync/lock, resume, fork) · M3 tool fs/glob/grep · M4 bash + jobs ·
+M3 tool fs/glob/grep · M4 bash + jobs ·
 M5 sandbox + approval · M6 token meter/compaction/spill · M7 subagent + skills + MCP · M8 CLI.
 
 Xem `docs/ARCHITECTURE.md` để hiểu luồng dữ liệu và `docs/blueprint.md` cho kế hoạch đầy đủ.
