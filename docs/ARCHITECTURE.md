@@ -202,6 +202,32 @@ content-addressed (sha256, dedupe) và trả attachment id. `Message.parts` + ma
 data-URI trong provider là đường đưa ảnh tới model; phần mapping có test offline, còn đầu cuối thì
 chưa xác nhận vì tài khoản đang dùng không có model thị giác.
 
+## Vòng lặp và uỷ quyền (M7)
+
+**Vòng lặp không biết gì về persistence.** `runAgentLoop` nhận provider, registry, `ToolCtx`,
+message khởi đầu và một signal; nó phát ra `AgentLoopEventRecord` (`step.start`, `llm.response`,
+`tool.result`, `run.end`) để caller ghi vào log. Nhờ vậy cùng một vòng lặp phục vụ agent con (M7) và
+agent top-level (M8) mà không cần sửa.
+
+**Lỗi tool là dữ liệu, không phải ngoại lệ.** Kết quả tool thất bại được nạp lại cho model dưới
+dạng `[E_UNKNOWN_TOOL] tên_tool failed: …`; chỉ lỗi *provider* mới kết thúc run với `status: 'error'`.
+Text một phần của lần gọi lỗi vẫn được giữ trong `result.text` và trong transcript.
+
+**Cô lập context là đòn tiết kiệm thật.** `subagent` chạy một vòng lặp riêng với history riêng và
+chỉ trả về câu trả lời cuối; transcript của con được trả cho caller để ghi log nhưng **không** được
+nối vào message của cha. Test khẳng định mảng message của cha không đổi sau khi con chạy xong.
+
+**Skill là progressive disclosure.** Quét root sinh catalog tên + mô tả (một dòng mỗi skill, có cap);
+toàn văn `SKILL.md` chỉ được đọc khi model gọi tool `skill`. Skill trùng tên: source đứng trước thắng
+(project phủ user).
+
+**MCP chỉ làm phần cần thiết.** Transport là JSON-RPC 2.0 phân cách bằng newline (không phải
+Content-Length), và client chỉ hiểu `initialize`, `tools/list`, `tools/call`; notification hay
+request do server chủ động gửi đều bị bỏ qua thay vì đoán. Tool MCP được quảng cáo bằng **schema của
+server** (`jsonSchema` trên `ToolDef`) vì đó mới là nguồn sự thật của nó, còn validate tại chỗ để
+permissive — server là bên có quyền từ chối. Một MCP call có thể được mô hình hoá như *network
+egress* (`net.fetch` với `mcp://…`) nếu deployment muốn gate nó.
+
 ## Quy ước
 
 - Mọi import nội bộ dùng đuôi `.js` (NodeNext ESM).

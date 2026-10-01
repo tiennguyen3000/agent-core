@@ -244,6 +244,50 @@ export type {
 export { createReadImageTool } from './tools/images.js';
 export type { ReadImageConfig } from './tools/images.js';
 
+export { runAgentLoop } from './agent/loop.js';
+export type {
+  AgentLoopEvent,
+  AgentLoopEventRecord,
+  AgentLoopLlmEvent,
+  AgentLoopListener,
+  AgentLoopOptions,
+  AgentLoopToolEvent,
+  AgentRunResult,
+  AgentRunStatus,
+} from './agent/loop.js';
+
+export { createSubagentRunner } from './agent/subagent.js';
+export type {
+  SubagentRunResult,
+  SubagentRunner,
+  SubagentRunnerOptions,
+} from './agent/subagent.js';
+export { createSubagentTool } from './tools/subagent.js';
+export type { SubagentToolConfig } from './tools/subagent.js';
+
+export { createSkillLoader, parseSkillMarkdown } from './skills/loader.js';
+export type {
+  ParsedSkillFile,
+  SkillEntry,
+  SkillLoadResult,
+  SkillLoader,
+  SkillLoaderOptions,
+  SkillScope,
+  SkillSource,
+} from './skills/loader.js';
+export { createSkillTool } from './tools/skill.js';
+export type { SkillToolConfig } from './tools/skill.js';
+
+export { MCP_PROTOCOL_VERSION, McpError, createMcpStdioClient } from './mcp/client.js';
+export type {
+  McpCallResult,
+  McpClient,
+  McpStdioClientOptions,
+  McpToolInfo,
+} from './mcp/client.js';
+export { createMcpToolset, mcpToolName } from './tools/mcp.js';
+export type { McpToolsetConfig } from './tools/mcp.js';
+
 export type {
   Action,
   PolicyDecision,

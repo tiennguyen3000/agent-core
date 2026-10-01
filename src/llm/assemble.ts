@@ -37,7 +37,9 @@ export function assembleResponse(deltas: readonly LLMDelta[]): CompletedResponse
   let text = '';
   let reasoning = '';
   let usage: Usage | undefined;
-  let stop: StopReason = 'end';
+  // First stop wins: a second one cannot silently clear an error the provider
+  // already reported.
+  let stop: StopReason | undefined;
   let errorCode: string | undefined;
   const calls = new Map<number, PartialCall>();
 
@@ -67,8 +69,10 @@ export function assembleResponse(deltas: readonly LLMDelta[]): CompletedResponse
         break;
       }
       case 'stop':
-        stop = delta.reason;
-        errorCode = delta.errorCode;
+        if (stop === undefined) {
+          stop = delta.reason;
+          errorCode = delta.errorCode;
+        }
         break;
     }
   }
@@ -98,5 +102,5 @@ export function assembleResponse(deltas: readonly LLMDelta[]): CompletedResponse
     });
   }
 
-  return { text, reasoning, toolCalls, usage, stop, errorCode, malformedToolArgs };
+  return { text, reasoning, toolCalls, usage, stop: stop ?? 'end', errorCode, malformedToolArgs };
 }

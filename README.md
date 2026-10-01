@@ -1,8 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M6 — context management** (token meter, pruner, compaction 1 model call, attachment
-cho ảnh). Chưa có vòng lặp agent.
+Trạng thái: **M7 — subagent + skills + MCP** (vòng lặp agent thật, agent con context riêng, skill
+nạp theo yêu cầu, MCP stdio). Chưa có CLI.
 
 ## Lệnh
 
@@ -50,6 +50,13 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `src/context/manager.ts` | `createContextManager`: prune trước (miễn phí), compact sau; trả `CompactionEventInput` để caller ghi log | M6 |
 | `src/context/attachments.ts` | attachment store content-addressed (sha256), dedupe, `sniffImageMime` theo magic bytes | M6 |
 | `src/tools/images.ts` | `fs_read_image`: validate bằng magic bytes, lưu attachment, trả id thay vì bytes | M6 |
+| `src/agent/loop.ts` | `runAgentLoop`: vòng lặp thật (step, budget `maxSteps`/`tokenBudget`/`wallClockMs`, cancel, `onEvent` để caller ghi log) | M7 |
+| `src/agent/subagent.ts` | `createSubagentRunner`: agent con **context riêng**, chỉ trả summary về cha | M7 |
+| `src/tools/subagent.ts` | tool `subagent` — cha chỉ nhận câu trả lời cuối, không nhận từng bước | M7 |
+| `src/skills/loader.ts` | quét `SKILL.md`/`<name>.md`, frontmatter, catalog chỉ gồm tên + mô tả; **nạp toàn văn theo yêu cầu** | M7 |
+| `src/tools/skill.ts` | tool `skill` — trả về hướng dẫn đầy đủ của một skill | M7 |
+| `src/mcp/client.ts` | MCP stdio client: JSON-RPC 2.0 phân cách bằng newline, `initialize`/`tools/list`/`tools/call`, timeout, đóng | M7 |
+| `src/tools/mcp.ts` | biến tool của MCP thành `ToolDef` tên `mcp__<server>__<tool>`, quảng cáo schema của server | M7 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
 | `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
 
@@ -67,6 +74,9 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `job_list` | có | không | trạng thái, exit code, thời lượng, lệnh |
 | `job_kill` | không | không | SIGTERM → SIGKILL, chỉ trả về khi tiến trình đã chết |
 | `fs_read_image` | có | không | png/jpeg/webp/gif, kiểm magic bytes, lưu attachment (sha256), cap 5 MiB |
+| `subagent` | không | không | agent con context riêng; cha chỉ nhận summary (đòn tiết kiệm token) |
+| `skill` | có | không | nạp toàn văn một skill trong catalog của system prompt |
+| `mcp__<server>__<tool>` | không | tuỳ chọn | cầu nối tới MCP server qua stdio; schema do server quyết định |
 
 `fs_read_image` **chưa có**: `Message.content` hiện là text-only, nên ảnh cần tầng attachment
 (M6) trước khi có thể đưa vào hội thoại.
@@ -117,7 +127,20 @@ Tổng ~6 request nhỏ, `max_tokens` bị chặn.
 
 ## Chưa có (theo milestone)
 
-M7 subagent + skills + MCP · M8 CLI + vòng lặp agent (ghép provider + tool + log + context).
+M8 CLI: ghép provider + tool + log + context + sandbox thành một app chạy được (`dsh`-like), kèm
+`/compact`, `--resume`, `<command> <args>`.
+
+### Điều gì đã kiểm chứng ở M7
+
+- **Vòng lặp**: chạy nhiều step, nạp lỗi tool về cho model (`[E_UNKNOWN_TOOL] …`), dừng đúng ở
+  `maxSteps`/`tokenBudget`/`wallClockMs`, cancel giữa run, giữ nguyên text một phần khi provider lỗi.
+- **Cô lập context của subagent**: test khẳng định mảng message của cha **không đổi** sau khi agent
+  con chạy xong, và request của con bắt đầu từ đúng `task` (không thấy hội thoại của cha).
+- **Skill nạp theo yêu cầu**: `promptSection()` chỉ có tên + mô tả (test assert phần thân skill
+  **không** xuất hiện), toàn văn chỉ đọc khi gọi tool.
+- **MCP**: chạy thật với một server stdio viết riêng trong `tests/helpers/mcp-server.mjs` —
+  handshake, `tools/list`, `tools/call`, lỗi JSON-RPC, tool báo lỗi, server treo (timeout), server
+  chết giữa chừng, dòng rác, và đóng client. Tất cả offline, không mạng.
 
 ### Ảnh: đã có gì, chưa kiểm chứng gì
 

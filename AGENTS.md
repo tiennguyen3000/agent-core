@@ -23,6 +23,7 @@ Test phải chạy **offline**, không dùng timer, không gọi mạng. Chạy 
   `shell.confinement`, đừng giả định. Đừng gán `'never'` cho tool có side effect.
 - Mọi quyết định policy/approval phải đi vào audit sink (`policy.decision`, `approval.*`).
 - Mọi hành vi ghi vào log dưới dạng `SessionEvent`; không giữ state song song.
+- Transcript của agent con **không bao giờ** được nối vào message của cha: uỷ quyền chỉ trả summary.
 - Không in secret ra log/stdout.
 - Import nội bộ dùng đuôi `.js`. Không dùng `any`.
 - Muốn lệch hợp đồng thì nói rõ và đề xuất, không tự sửa âm thầm.

@@ -115,6 +115,11 @@ export const ToolErrorCode = {
   PathEscape: 'E_PATH_ESCAPE',
   Access: 'E_ACCESS',
   TooLarge: 'E_TOO_LARGE',
+  BudgetExceeded: 'E_BUDGET_EXCEEDED',
+  MaxSteps: 'E_MAX_STEPS',
+  McpFailed: 'E_MCP_FAILED',
+  McpTimeout: 'E_MCP_TIMEOUT',
+  McpClosed: 'E_MCP_CLOSED',
 } as const;
 
 export type ToolErrorCodeValue = (typeof ToolErrorCode)[keyof typeof ToolErrorCode];
@@ -157,6 +162,11 @@ interface ToolDefBase<A> {
   readonly name: string;
   readonly description: string;
   readonly schema: z.ZodType<A>;
+  /**
+   * Advertised schema when it does not come from zod — an MCP tool's contract
+   * belongs to its server, so that document *is* the single source (M7).
+   */
+  readonly jsonSchema?: JsonSchemaObject;
   /** Safe to run concurrently with other tools in the same step. */
   readonly parallelSafe: boolean;
   readonly timeoutMs: number;
@@ -292,7 +302,7 @@ export class ToolRegistry {
     return this.list().map((tool) => ({
       name: tool.name,
       description: tool.description,
-      parameters: this.#toJsonSchema(tool.schema),
+      parameters: tool.jsonSchema ?? this.#toJsonSchema(tool.schema),
     }));
   }
 

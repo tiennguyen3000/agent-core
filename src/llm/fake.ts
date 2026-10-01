@@ -63,7 +63,12 @@ export class FakeProvider implements LLMProvider {
       yield delta;
     }
 
-    yield { type: 'stop', reason: 'end' };
+    // A script that ends with its own stop is authoritative; only add the
+    // implicit one when the script did not say how the stream ends.
+    const scriptDeclaresStop = script.deltas.some((delta) => delta.type === 'stop');
+    if (!scriptDeclaresStop) {
+      yield { type: 'stop', reason: 'end' };
+    }
   }
 }
 
