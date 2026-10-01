@@ -6,6 +6,9 @@ import type {
   ShellRunner,
   ToolCtx,
 } from '../../src/tools/registry.js';
+import { memoryFs } from './memory-fs.js';
+
+export { memoryFs };
 
 /** Test double for the policy layer: records every action it was asked about. */
 export class RecordingGate implements PolicyGate {
@@ -20,24 +23,6 @@ export class RecordingGate implements PolicyGate {
     this.calls.push(action);
     return this.outcome;
   }
-}
-
-export function memoryFs(): SandboxedFs & { readonly files: Map<string, string> } {
-  const files = new Map<string, string>();
-  return {
-    files,
-    read: async (path) => {
-      const value = files.get(path);
-      if (value === undefined) {
-        throw new Error(`ENOENT: ${path}`);
-      }
-      return value;
-    },
-    write: async (path, content) => {
-      files.set(path, content);
-    },
-    exists: async (path) => files.has(path),
-  };
 }
 
 export function recordingShell(): ShellRunner & { readonly commands: string[] } {
@@ -69,16 +54,21 @@ export interface CtxOptions {
   readonly approve?: boolean;
   /** Records every action the runtime asked the human about. */
   readonly approvals?: Action[];
+  readonly workdir?: string;
+  readonly fs?: SandboxedFs;
+  readonly reads?: ToolCtx['reads'];
 }
 
 export function makeCtx(options: CtxOptions = {}): ToolCtx {
   const approvals = options.approvals ?? [];
+  const workdir = options.workdir ?? '/ws';
   return {
     signal: options.signal ?? new AbortController().signal,
-    workdir: '/workspace',
-    fs: memoryFs(),
+    workdir,
+    fs: options.fs ?? memoryFs({ root: workdir }),
     shell: recordingShell(),
     jobs: recordingJobs(),
+    ...(options.reads === undefined ? {} : { reads: options.reads }),
     requestApproval: async (action) => {
       approvals.push(action);
       return options.approve ?? true;

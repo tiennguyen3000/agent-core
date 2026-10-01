@@ -98,6 +98,31 @@ còn, cùng máy) hoặc lock không đọc được thì được tha; lock c�
 `forkSessionLog` copy tiền tố `seq <= upToSeq` sang session mới, giữ nguyên số `seq`, không sửa
 session nguồn, và từ chối ghi đè target đã tồn tại.
 
+## Tầng tool (M3)
+
+**Path.** Cổng `ctx.fs` luôn nhận **absolute** path (để M5 sandbox kiểm soát một chỗ), còn mọi thứ
+model nhìn thấy là path **relative** kiểu POSIX. `fs_write`/`fs_edit` tự kiểm tra `isInsideWorkdir`
+trước khi gọi cổng, nên kể cả khi port chưa bị sandbox thì `../` và path tuyệt đối vẫn bị chặn
+(`E_PATH_ESCAPE`). Đọc thì được phép ra ngoài workspace — chỉ ghi mới bị giới hạn.
+
+**Read-before-edit (tuỳ chọn).** Nếu `ctx.reads` có `ReadTracker`, mutation chỉ được phép khi path
+đó đã được đọc và nội dung chưa đổi kể từ lúc đọc (`E_NO_READ` / `E_STALE_READ`). Đọc một file
+**không tồn tại** ghi lại "vắng mặt", và đó chính là điều kiện cho phép tạo đúng path ấy — nên
+`fs_read` trên file thiếu trả về gợi ý dùng `fs_write` chứ không phải một lỗi cụt.
+
+**Cap ở mọi nơi.** `fs_read` cap số dòng và số token inline; `fs_glob` cap số entry/kết quả;
+`fs_grep` cap match, kích thước mỗi file, tổng byte quét, và bỏ qua file nhị phân. Khi chạm cap,
+output **nói rõ đã dừng sớm** thay vì im lặng cắt.
+
+**Song song có kỷ luật.** `dispatchMany` giữ đúng thứ tự model yêu cầu, chỉ chồng lấn các tool khai
+báo `parallelSafe: true`, và các tool còn lại chạy đơn độc (tuỳ chọn `maxParallel` để chặn trên).
+Kết quả trả về theo thứ tự gọi, không theo thứ tự hoàn thành.
+
+**Retention (invariant 8).** Sau khi handler chạy, output vượt `maxInlineTokens` được thay bằng
+head + tail + thông báo; nếu có `SpillStore` thì toàn văn nằm trong file để model đọc lại
+(`spillPath`). Store lỗi thì **giữ nguyên output gốc** — mất file chấp nhận được, mất dữ liệu thì
+không.
+
 ## Quy ước
 
 - Mọi import nội bộ dùng đuôi `.js` (NodeNext ESM).

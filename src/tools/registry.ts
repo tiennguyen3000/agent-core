@@ -11,14 +11,25 @@
  */
 
 import { z } from 'zod';
+import { retainOutput } from '../context/spill.js';
+import type { SpillStore } from '../context/spill.js';
 import type { JsonSchemaObject, ToolSchema } from '../llm/types.js';
 import type { Action, PolicyGate } from '../policy/gate.js';
+import type { ReadTracker } from './observation.js';
+
+/** One directory entry as returned by the filesystem port's `list`. */
+export interface DirEntry {
+  readonly name: string;
+  readonly isDirectory: boolean;
+}
 
 /** Filesystem port. The sandboxed implementation lands in M5. */
 export interface SandboxedFs {
   read(path: string): Promise<string>;
   write(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
+  /** Direct children of `dir`; the tools recurse through this (M3). */
+  list(dir: string): Promise<readonly DirEntry[]>;
 }
 
 export interface ShellResult {
@@ -54,6 +65,11 @@ export interface ToolCtx {
   readonly fs: SandboxedFs;
   readonly shell: ShellRunner;
   readonly jobs: JobRegistry;
+  /**
+   * Optional observation policy (M3). When mounted, the filesystem tools refuse
+   * to overwrite a file the agent has not read, or one that changed since.
+   */
+  readonly reads?: ReadTracker;
   requestApproval(action: Action): Promise<boolean>;
   log(line: string): void;
 }
@@ -76,6 +92,13 @@ export const ToolErrorCode = {
   Cancelled: 'E_CANCELLED',
   Timeout: 'E_TIMEOUT',
   ToolFailed: 'E_TOOL_FAILED',
+  NotFound: 'E_NOT_FOUND',
+  IsDirectory: 'E_IS_DIRECTORY',
+  NoRead: 'E_NO_READ',
+  StaleRead: 'E_STALE_READ',
+  NoMatch: 'E_NO_MATCH',
+  AmbiguousMatch: 'E_AMBIGUOUS_MATCH',
+  PathEscape: 'E_PATH_ESCAPE',
 } as const;
 
 export type ToolErrorCodeValue = (typeof ToolErrorCode)[keyof typeof ToolErrorCode];
@@ -87,7 +110,7 @@ interface ToolDefBase<A> {
   /** Safe to run concurrently with other tools in the same step. */
   readonly parallelSafe: boolean;
   readonly timeoutMs: number;
-  /** Above this estimate the result is spilled instead of inlined (M6). */
+  /** Above this estimate the result is spilled instead of inlined (invariant 8). */
   readonly maxInlineTokens?: number;
   run(args: A, ctx: ToolCtx): Promise<ToolResult>;
 }
@@ -143,6 +166,26 @@ export interface ToolRegistryOptions {
   readonly toJsonSchema?: (schema: z.ZodType<unknown>) => JsonSchemaObject;
   /** Injectable clock so dispatch metadata stays testable. */
   readonly now?: () => number;
+  /** Where oversized tool output is parked (invariant 8). */
+  readonly spill?: SpillStore;
+  /**
+   * Injectable timer used for tool timeouts. It returns a cancel function, so a
+   * test can fire the deadline deterministically instead of sleeping.
+   */
+  readonly schedule?: (fn: () => void, ms: number) => () => void;
+  /** Concurrency cap for parallel-safe batches in `dispatchMany`. */
+  readonly maxParallel?: number;
+}
+
+export interface ToolCallRequest {
+  readonly name: string;
+  readonly args: unknown;
+}
+
+function defaultSchedule(fn: () => void, ms: number): () => void {
+  const timer = setTimeout(fn, ms);
+  timer.unref();
+  return () => clearTimeout(timer);
 }
 
 export class ToolRegistry {
@@ -150,11 +193,17 @@ export class ToolRegistry {
   readonly #gate: PolicyGate | undefined;
   readonly #toJsonSchema: (schema: z.ZodType<unknown>) => JsonSchemaObject;
   readonly #now: () => number;
+  readonly #spill: SpillStore | undefined;
+  readonly #schedule: (fn: () => void, ms: number) => () => void;
+  readonly #maxParallel: number;
 
   constructor(options: ToolRegistryOptions = {}) {
     this.#gate = options.gate;
     this.#toJsonSchema = options.toJsonSchema ?? defaultToJsonSchema;
     this.#now = options.now ?? (() => Date.now());
+    this.#spill = options.spill;
+    this.#schedule = options.schedule ?? defaultSchedule;
+    this.#maxParallel = Math.max(1, options.maxParallel ?? 4);
   }
 
   get size(): number {
@@ -224,9 +273,10 @@ export class ToolRegistry {
     const startedAt = this.#now();
     try {
       const result = await this.#runWithTimeout(tool, parsed.data, ctx);
+      const retained = await this.#retain(tool, result);
       return {
-        ...result,
-        meta: { ...(result.meta ?? {}), durationMs: this.#now() - startedAt },
+        ...retained,
+        meta: { ...(retained.meta ?? {}), durationMs: this.#now() - startedAt },
       };
     } catch (error) {
       if (error instanceof ToolTimeoutError) {
@@ -240,6 +290,80 @@ export class ToolRegistry {
       }
       return failure(ToolErrorCode.ToolFailed, `"${name}" failed: ${errorMessage(error)}`);
     }
+  }
+
+  /**
+   * Runs a step's tool calls in the order the model asked for, overlapping only
+   * the tools that declare themselves parallel-safe. Results keep call order.
+   */
+  async dispatchMany(
+    calls: readonly ToolCallRequest[],
+    ctx: ToolCtx,
+  ): Promise<readonly ToolResult[]> {
+    const results: ToolResult[] = [];
+    let batch: number[] = [];
+
+    const runOne = async (index: number): Promise<ToolResult> => {
+      const call = calls[index];
+      if (call === undefined) {
+        return failure(ToolErrorCode.UnknownTool, `No tool call at index ${index}.`);
+      }
+      return await this.dispatch(call.name, call.args, ctx);
+    };
+
+    const flush = async (): Promise<void> => {
+      const indexes = batch;
+      batch = [];
+      for (let start = 0; start < indexes.length; start += this.#maxParallel) {
+        const chunk = indexes.slice(start, start + this.#maxParallel);
+        const settled = await Promise.all(chunk.map(async (index) => await runOne(index)));
+        chunk.forEach((index, offset) => {
+          results[index] = settled[offset] as ToolResult;
+        });
+      }
+    };
+
+    for (let index = 0; index < calls.length; index += 1) {
+      const call = calls[index];
+      const parallelSafe = call !== undefined && this.#tools.get(call.name)?.parallelSafe === true;
+      if (parallelSafe) {
+        batch.push(index);
+        continue;
+      }
+      await flush();
+      results[index] = await runOne(index);
+    }
+    await flush();
+    return results;
+  }
+
+  /**
+   * Applies `maxInlineTokens`: the model keeps a head and a tail, and the full
+   * text is parked in the spill store when one is mounted (invariant 8).
+   */
+  async #retain(tool: ToolDef<unknown>, result: ToolResult): Promise<ToolResult> {
+    const maxInlineTokens = tool.maxInlineTokens;
+    if (maxInlineTokens === undefined || maxInlineTokens <= 0) {
+      return result;
+    }
+
+    const retained = await retainOutput(result.output, {
+      maxInlineTokens,
+      toolName: tool.name,
+      ...(this.#spill === undefined ? {} : { store: this.#spill }),
+    });
+    if (!retained.truncated) {
+      return result;
+    }
+
+    const meta = {
+      ...(result.meta ?? {}),
+      truncated: true,
+      omittedChars: retained.omittedChars,
+    };
+    return retained.spillPath === undefined
+      ? { ...result, output: retained.text, meta }
+      : { ...result, output: retained.text, spillPath: retained.spillPath, meta };
   }
 
   async #authorize(
@@ -314,11 +438,10 @@ export class ToolRegistry {
     }
 
     let timedOut = false;
-    const timer = setTimeout(() => {
+    const cancelTimer = this.#schedule(() => {
       timedOut = true;
       controller.abort(new ToolTimeoutError(tool.name, tool.timeoutMs));
     }, tool.timeoutMs);
-    timer.unref();
 
     try {
       return await tool.run(args, { ...ctx, signal: controller.signal });
@@ -328,7 +451,7 @@ export class ToolRegistry {
       }
       throw error;
     } finally {
-      clearTimeout(timer);
+      cancelTimer();
       ctx.signal.removeEventListener('abort', forward);
     }
   }

@@ -85,16 +85,51 @@ export type {
 } from './session/log.js';
 
 export type {
+  DirEntry,
   JobRegistry,
   SandboxedFs,
   ShellResult,
   ShellRunner,
+  ToolCallRequest,
   ToolCtx,
   ToolDef,
   ToolResult,
 } from './tools/registry.js';
 export { ToolErrorCode, ToolRegistry, ToolTimeoutError } from './tools/registry.js';
 export type { ToolErrorCodeValue, ToolRegistryOptions } from './tools/registry.js';
+
+export { ReadTracker } from './tools/observation.js';
+export type { ReadStatus } from './tools/observation.js';
+
+export {
+  isInsideWorkdir,
+  joinRelative,
+  resolveToolPath,
+  toPosixPath,
+  toRelativePath,
+} from './tools/paths.js';
+export type { ResolvedToolPath } from './tools/paths.js';
+
+export { createFsEditTool, createFsReadTool, createFsWriteTool } from './tools/fs.js';
+export type { FsReadConfig } from './tools/fs.js';
+
+export {
+  DEFAULT_IGNORED_DIRS,
+  createGlobTool,
+  createGrepTool,
+  globToRegExp,
+} from './tools/search.js';
+export type { SearchToolConfig } from './tools/search.js';
+
+export { CHARS_PER_TOKEN, estimateTokens, tokensToChars } from './context/tokens.js';
+
+export { createFileSpillStore, retainOutput, splitHeadTail } from './context/spill.js';
+export type {
+  FileSpillStoreOptions,
+  RetainOptions,
+  SpillResult,
+  SpillStore,
+} from './context/spill.js';
 
 export type {
   Action,

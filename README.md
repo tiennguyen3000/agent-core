@@ -1,8 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M2 — session log bền vững** (JSONL + fsync + lock + repair, resume, fork). Chưa có
-vòng lặp agent.
+Trạng thái: **M3 — tool fs/glob/grep** (read-before-edit, chặn ghi ngoài workspace, spill output
+lớn, dispatch song song). Chưa có vòng lặp agent.
 
 ## Lệnh
 
@@ -26,10 +26,29 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `src/session/events.ts` | union `SessionEvent` + luật `seq` liên tục | M0 |
 | `src/session/projection.ts` | `project()` / `replay()`: dựng transcript từ log, xử lý compaction | M0 |
 | `src/session/log.ts` | log append-only JSONL: fsync từng event, lock file (chống 2 writer, tha lock chết), **sửa torn tail** khi mở, từ chối log hỏng giữa dòng / nhảy seq, `forkSessionLog`, `listSessionIds` | M2 |
-| `src/tools/registry.ts` | `ToolDef`, `ToolRegistry`, dispatch + gate + timeout + mã lỗi | M0 |
+| `src/tools/registry.ts` | `ToolDef`, `ToolRegistry`: dispatch + gate + timeout + mã lỗi, `dispatchMany` (chạy song song chỉ tool `parallelSafe`), retention `maxInlineTokens` | M0, M3 |
+| `src/tools/fs.ts` | `fs_read`, `fs_write`, `fs_edit`: read-before-edit, chặn ghi ngoài workspace, `fs_read` file thiếu thì ghi nhận "vắng mặt" để cho phép tạo | M3 |
+| `src/tools/search.ts` | `fs_glob`, `fs_grep`: glob `**`/`*`/`?`/`{a,b}`, regex grep, bỏ qua `.git`/`node_modules`, cap entry/file/byte và báo khi dừng sớm | M3 |
+| `src/tools/observation.ts` | `ReadTracker`: `ok` / `not-read` / `stale` cho từng path | M3 |
+| `src/tools/paths.ts` | quy đổi path (port nhận absolute, model thấy relative) + kiểm tra thoát workspace | M3 |
+| `src/context/tokens.ts` | ước lượng token theo ký tự (chỉ để cắt output; số thật lấy từ provider) | M3 |
+| `src/context/spill.ts` | output quá lớn → head + tail + đường dẫn file đọc lại; store lỗi thì **không mất** output | M3 |
 | `src/policy/gate.ts` | `PolicyGate`, `SandboxMode`, `Action` | M0 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
 | `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
+
+### Tool đang có
+
+| Tool | Song song | Duyệt | Ghi chú |
+|---|---|---|---|
+| `fs_read` | có | không | đọc theo dòng, `offset`/`limit`, cap 2.400 token |
+| `fs_glob` | có | không | glob trong workspace, cap 200 kết quả |
+| `fs_grep` | có | không | regex, `glob` lọc file, cap 100 match / 1 MiB mỗi file / 8 MiB mỗi lần quét |
+| `fs_write` | không | `policy` | ghi đè cả file, bắt buộc đọc trước |
+| `fs_edit` | không | `policy` | thay literal, từ chối khi mơ hồ (`E_AMBIGUOUS_MATCH`) |
+
+`fs_read_image` **chưa có**: `Message.content` hiện là text-only, nên ảnh cần tầng attachment
+(M6) trước khi có thể đưa vào hội thoại.
 
 ### Cắm provider thật
 
@@ -77,7 +96,7 @@ Tổng ~6 request nhỏ, `max_tokens` bị chặn.
 
 ## Chưa có (theo milestone)
 
-M3 tool fs/glob/grep · M4 bash + jobs ·
-M5 sandbox + approval · M6 token meter/compaction/spill · M7 subagent + skills + MCP · M8 CLI.
+M4 bash + jobs · M5 sandbox + approval (sandbox cho `ctx.fs`/`ctx.shell`) ·
+M6 token meter/compaction + attachment (để có `fs_read_image`) · M7 subagent + skills + MCP · M8 CLI.
 
 Xem `docs/ARCHITECTURE.md` để hiểu luồng dữ liệu và `docs/blueprint.md` cho kế hoạch đầy đủ.
