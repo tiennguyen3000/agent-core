@@ -288,6 +288,23 @@ export type {
 export { createMcpToolset, mcpToolName } from './tools/mcp.js';
 export type { McpToolsetConfig } from './tools/mcp.js';
 
+export {
+  DEFAULT_PRICES,
+  estimateCost,
+  formatUsageReport,
+} from './context/cost.js';
+export type { CostEstimate, ModelPrice } from './context/cost.js';
+
+export { createAgentRuntime, mapLoopEvent } from './app/runtime.js';
+export type {
+  AgentRuntime,
+  AgentRuntimeOptions,
+  AgentTurnResult,
+} from './app/runtime.js';
+
+export { describeAction, parseArgs, runCli } from './cli/main.js';
+export type { CliCommand, CliIo, CliOptions } from './cli/main.js';
+
 export type {
   Action,
   PolicyDecision,

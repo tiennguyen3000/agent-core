@@ -85,6 +85,16 @@ export function createTokenMeter(options: TokenMeterOptions): TokenMeter {
 
   return {
     recordUsage(usage) {
+      const nothingReported =
+        usage.inputTokens === 0 &&
+        usage.outputTokens === 0 &&
+        (usage.cacheReadTokens ?? 0) === 0 &&
+        (usage.cacheWriteTokens ?? 0) === 0;
+      if (nothingReported) {
+        // A response that reported no tokens must not wipe a known measurement:
+        // keeping the previous (larger) pressure is the safer direction.
+        return;
+      }
       lastUsage = usage;
       // The next request carries this prompt plus the reply it produced.
       surfaceTokens = totalPromptTokens(usage) + usage.outputTokens;

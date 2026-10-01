@@ -1,0 +1,5 @@
+# pnpm 12 reads the dependency build allowlist from here, not package.json.
+# esbuild ships the platform binary as an optional dependency, but its
+# postinstall links it; approving it keeps `pnpm install` clean.
+allowBuilds:
+  esbuild: true

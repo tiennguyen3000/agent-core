@@ -49,6 +49,16 @@ describe('token meter', () => {
     });
   });
 
+  it('ignores a usage report that carries no tokens', () => {
+    const meter = createTokenMeter({ contextWindow: 1_000 });
+    meter.recordUsage({ inputTokens: 500, outputTokens: 100 });
+
+    meter.recordUsage({ inputTokens: 0, outputTokens: 0 });
+
+    expect(meter.surfaceTokens).toBe(600);
+    expect(meter.lastUsage?.inputTokens).toBe(500);
+  });
+
   it('never divides by a zero window', () => {
     const meter = createTokenMeter({ contextWindow: 0 });
     meter.recordUsage({ inputTokens: 10, outputTokens: 10 });

@@ -24,6 +24,8 @@ Test phải chạy **offline**, không dùng timer, không gọi mạng. Chạy 
 - Mọi quyết định policy/approval phải đi vào audit sink (`policy.decision`, `approval.*`).
 - Mọi hành vi ghi vào log dưới dạng `SessionEvent`; không giữ state song song.
 - Transcript của agent con **không bao giờ** được nối vào message của cha: uỷ quyền chỉ trả summary.
+- CLI phải test được: mọi thứ đi qua `runCli({ argv, io, provider, env })`, không đọc stdin trực tiếp
+  trong đường được test, và không tự tạo provider khi đã được inject.
 - Không in secret ra log/stdout.
 - Import nội bộ dùng đuôi `.js`. Không dùng `any`.
 - Muốn lệch hợp đồng thì nói rõ và đề xuất, không tự sửa âm thầm.

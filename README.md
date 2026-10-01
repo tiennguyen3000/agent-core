@@ -1,8 +1,7 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M7 — subagent + skills + MCP** (vòng lặp agent thật, agent con context riêng, skill
-nạp theo yêu cầu, MCP stdio). Chưa có CLI.
+Trạng thái: **M0–M8 xong** — chạy được như một CLI thật (`pnpm agent "task"`).
 
 ## Lệnh
 
@@ -12,6 +11,23 @@ pnpm typecheck     # tsc --noEmit, 0 error
 pnpm lint          # eslint, 0 warning/error
 pnpm test          # vitest, offline, không phụ thuộc thời gian
 ```
+
+## Chạy nó
+
+```bash
+pnpm agent --help                                  # không cần key
+pnpm agent --list                                  # liệt kê session đã lưu
+
+export DEEPSEEK_API_KEY=sk-...
+pnpm agent "đọc src/index.ts và liệt kê các export"
+pnpm agent --workspace ~/code/project --yes "sửa test đang fail"
+pnpm agent --resume session-1730000000000 "giờ thêm test cho phần vừa sửa"
+```
+
+Không có bước build: `pnpm agent` chạy TypeScript trực tiếp qua `tsx`. Trong REPL có
+`/help`, `/cost`, `/compact`, `/model <name>`, `/resume <id>`, `/fork [id]`, `/export`, `/quit`.
+Mặc định mode là `workspace-write`: ghi trong workspace thì tự do, ghi ra ngoài bị **từ chối**
+(thêm `--escalate` để hỏi, `--yes` để tự đồng ý mọi thứ).
 
 ## Đã có
 
@@ -57,6 +73,9 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `src/tools/skill.ts` | tool `skill` — trả về hướng dẫn đầy đủ của một skill | M7 |
 | `src/mcp/client.ts` | MCP stdio client: JSON-RPC 2.0 phân cách bằng newline, `initialize`/`tools/list`/`tools/call`, timeout, đóng | M7 |
 | `src/tools/mcp.ts` | biến tool của MCP thành `ToolDef` tên `mcp__<server>__<tool>`, quảng cáo schema của server | M7 |
+| `src/context/cost.ts` | bảng giá theo model + `estimateCost` + báo cáo token/chi phí cuối phiên | M8 |
+| `src/app/runtime.ts` | composition root: ghép sandbox + log + tool + skills + subagent + context + loop, ghi mọi event của loop vào log | M8 |
+| `src/cli/main.ts` | `parseArgs` + `runCli`: một lệnh hoặc REPL, stream câu trả lời, dòng tool, hỏi duyệt, slash command, exit code | M8 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
 | `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
 
@@ -125,10 +144,27 @@ Tổng ~6 request nhỏ, `max_tokens` bị chặn.
   (65% với prompt 591 token, nhưng ~99% với prefix hàng trăm nghìn token) — đây là lý do định
   lượng được cho lời khuyên "giữ prefix ổn định".
 
-## Chưa có (theo milestone)
+## Điều gì đã kiểm chứng ở M8
 
-M8 CLI: ghép provider + tool + log + context + sandbox thành một app chạy được (`dsh`-like), kèm
-`/compact`, `--resume`, `<command> <args>`.
+- **Một lệnh chạy hết vòng**: `runCli` với provider giả (fixture script) chạy trọn một turn —
+  provider → tool → log → replay → báo cáo token/chi phí — và trả exit code.
+- **Duyệt là thật**: `--escalate` + trả lời `n` ⇒ `E_APPROVAL_DENIED` được in ra; `--yes` thì
+  không hỏi lần nào.
+- **REPL**: `/help`, `/cost`, `/export` (ghi file JSONL thật), `/quit`; `/resume <id>` nạp lại
+  session cũ qua đúng `projection` (history cũ nằm trong request mới).
+- **`--resume` từ dòng lệnh** tiếp tục đúng session: request của turn mới bắt đầu bằng task cũ.
+- **Báo cáo chi phí** in `Tokens input … (cache read …) | output … (reasoning …) | total …` và
+  `Cost $…` theo bảng giá; session nhỏ vẫn hiện 6 chữ số thập phân thay vì `$0.0000`.
+
+### Chưa có / còn nợ
+
+- **Chạy thật với model thị giác** (xem phần Ảnh) và **MCP server bên thứ ba** (mới test với server
+  tự viết trong `tests/helpers/mcp-server.mjs`).
+- **Đo mức tiết kiệm của subagent trên task thật**: cơ chế cô lập đã có test, nhưng chưa đo token
+  tiết kiệm được bằng số.
+- **OS sandbox cho shell** không apply được trong môi trường phát triển này (xem phần Sandbox).
+- **Chưa có TUI/PTY**: CLI là dòng lệnh + REPL, chưa có terminal tương tác như sidebar của DSH.
+- **Chưa có file cấu hình MCP**: hiện phải mount `createMcpToolset` bằng code.
 
 ### Điều gì đã kiểm chứng ở M7
 

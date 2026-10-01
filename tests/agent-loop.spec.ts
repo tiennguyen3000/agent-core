@@ -80,9 +80,12 @@ describe('agent loop', () => {
     expect(result.messages[2]?.content).toBe('echo:hi');
     expect(events.map((event) => event.t)).toEqual([
       'step.start',
+      'llm.request',
       'llm.response',
+      'tool.call',
       'tool.result',
       'step.start',
+      'llm.request',
       'llm.response',
       'run.end',
     ]);

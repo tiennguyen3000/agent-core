@@ -228,6 +228,25 @@ server** (`jsonSchema` trên `ToolDef`) vì đó mới là nguồn sự thật c
 permissive — server là bên có quyền từ chối. Một MCP call có thể được mô hình hoá như *network
 egress* (`net.fetch` với `mcp://…`) nếu deployment muốn gate nó.
 
+## Composition và CLI (M8)
+
+**Composition root tách khỏi hành vi.** `createAgentRuntime` chỉ *ghép*: sandbox runtime, session
+log, tool roster, skill catalog, subagent, context manager và vòng lặp. Nó không tự quyết định gì về
+cách agent làm việc — mọi thứ đi qua tham số, kể cả provider. Nhờ vậy cùng một runtime chạy với
+DeepSeek thật hoặc `FakeProvider` trong test.
+
+**Loop phát event, runtime ghi log.** `mapLoopEvent` chuyển từng event của vòng lặp thành
+`SessionEvent` (`llm.request` → `llm.request`, `tool.call` → `tool.call`, …), nên log có đủ dấu vết
+để replay và audit mà bản thân vòng lặp không cần biết tới persistence.
+
+**CLI test được vì không tự đọc stdin.** `runCli({argv, io, provider, env})` nhận cả IO seam lẫn
+provider và trả về exit code; `main` chỉ là một dòng gọi nó. Nhờ vậy test điều khiển được câu trả
+lời cho prompt duyệt, xem được đúng câu hỏi đã hỏi, và chạy trọn một session mà không cần mạng.
+
+**Báo cáo chi phí dùng số thật.** `formatUsageReport` lấy `Usage` tích luỹ (đã tách cache read và
+reasoning) nhân với bảng giá theo model; model không có trong bảng thì nói thẳng là "unknown" chứ
+không bịa ra $0.
+
 ## Quy ước
 
 - Mọi import nội bộ dùng đuôi `.js` (NodeNext ESM).

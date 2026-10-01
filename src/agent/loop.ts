@@ -17,9 +17,11 @@ import type {
   LLMRequest,
   Message,
   ReasoningEffort,
+  StopReason,
   ToolCall,
   Usage,
 } from '../llm/types.js';
+import type { LLMRequestSnapshot } from '../session/events.js';
 import type { ToolCtx, ToolRegistry, ToolResult } from '../tools/registry.js';
 
 export type AgentRunStatus = 'done' | 'max-steps' | 'budget-exceeded' | 'cancelled' | 'error';
@@ -29,12 +31,29 @@ export interface AgentLoopEvent {
   readonly step: number;
 }
 
+export interface AgentLoopRequestEvent {
+  readonly t: 'llm.request';
+  readonly step: number;
+  readonly requestId: string;
+  readonly request: LLMRequestSnapshot;
+}
+
 export interface AgentLoopLlmEvent {
   readonly t: 'llm.response';
   readonly step: number;
+  readonly requestId: string;
   readonly text: string;
   readonly toolCalls: readonly ToolCall[];
   readonly usage: Usage | undefined;
+  readonly stop: StopReason;
+}
+
+export interface AgentLoopToolCallEvent {
+  readonly t: 'tool.call';
+  readonly step: number;
+  readonly name: string;
+  readonly callId: string;
+  readonly args: unknown;
 }
 
 export interface AgentLoopToolEvent {
@@ -54,7 +73,9 @@ export interface AgentLoopEndEvent {
 
 export type AgentLoopEventRecord =
   | AgentLoopEvent
+  | AgentLoopRequestEvent
   | AgentLoopLlmEvent
+  | AgentLoopToolCallEvent
   | AgentLoopToolEvent
   | AgentLoopEndEvent;
 
@@ -76,6 +97,8 @@ export interface AgentLoopOptions {
   readonly wallClockMs?: number;
   readonly reasoningEffort?: ReasoningEffort;
   readonly onEvent?: AgentLoopListener;
+  /** Called for every streamed delta, so a front end can render as it arrives. */
+  readonly onDelta?: (delta: LLMDelta) => void;
   readonly now?: () => number;
 }
 
@@ -157,6 +180,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
     steps += 1;
     await emit({ t: 'step.start', step: steps });
 
+    const requestId = `request-${String(steps)}`;
     const request: LLMRequest = {
       model: options.model,
       system: options.system,
@@ -168,9 +192,13 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
         ? {}
         : { reasoningEffort: options.reasoningEffort }),
     };
+    const { signal: _signal, ...snapshot } = request;
+    void _signal;
+    await emit({ t: 'llm.request', step: steps, requestId, request: snapshot });
 
     const deltas: LLMDelta[] = [];
     for await (const delta of options.provider.stream(request)) {
+      options.onDelta?.(delta);
       deltas.push(delta);
     }
     const response = assembleResponse(deltas);
@@ -178,9 +206,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
     await emit({
       t: 'llm.response',
       step: steps,
+      requestId,
       text: response.text,
       toolCalls: response.toolCalls,
       usage: response.usage,
+      stop: response.stop,
     });
 
     // Keep whatever the model produced before an error: the caller shows it and
@@ -206,6 +236,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
     if (response.toolCalls.length === 0) {
       status = 'done';
       break;
+    }
+
+    for (const call of response.toolCalls) {
+      await emit({
+        t: 'tool.call',
+        step: steps,
+        name: call.name,
+        callId: call.id,
+        args: call.args,
+      });
     }
 
     const results = await options.registry.dispatchMany(
