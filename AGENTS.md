@@ -15,7 +15,10 @@ Test phải chạy **offline**, không dùng timer, không gọi mạng. Chạy 
 - Không stub, không `TODO`/`FIXME`, không mock trong `src/`. eslint chặn ở mức error.
 - Interface trong `src/llm/types.ts`, `src/session/events.ts`, `src/tools/registry.ts`,
   `src/policy/gate.ts` là **hợp đồng cứng**: chỉ được thêm field, không đổi tên, không xoá.
-- Mọi fs/shell/network phải đi qua `PolicyGate`. Không có ngoại lệ.
+- Mọi **mutation** fs và mọi lệnh shell/network phải đi qua `PolicyGate`. Tool khai báo
+  `requiresApproval: 'never'` là tool không cần hỏi duyệt (ví dụ đọc file, todo) nên không gọi
+  gate; việc thi hành sandbox cho read/write nằm ở cổng `ctx.fs` / `ctx.shell` (M5), không phải ở
+  `dispatch`. Đừng gán `'never'` cho tool có side effect.
 - Mọi hành vi ghi vào log dưới dạng `SessionEvent`; không giữ state song song.
 - Không in secret ra log/stdout.
 - Import nội bộ dùng đuôi `.js`. Không dùng `any`.
@@ -25,7 +28,8 @@ Test phải chạy **offline**, không dùng timer, không gọi mạng. Chạy 
 
 1. Log là nguồn sự thật; transcript luôn được replay.
 2. Compaction che, không xoá.
-3. Mọi fs/shell đi qua `PolicyGate`.
+3. Mọi mutation fs + mọi lệnh shell/network đi qua `PolicyGate` (tool `'never'` không hỏi duyệt;
+   sandbox cho read/write thuộc `ctx.fs`/`ctx.shell` ở M5).
 4. Schema tool sinh từ zod, không viết tay bản thứ hai.
 5. Cancel lan truyền tới provider, tool, tiến trình con; không rò tiến trình.
 6. Budget được thực thi: `maxSteps`, `tokenBudget`, `wallClockMs`, `toolTimeout`.

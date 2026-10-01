@@ -4,5 +4,6 @@ coverage/
 .pnpm-store/
 .tooling/
 .npm-cache/
+tests/.tmp/
 .DS_Store
 *.log

@@ -1,7 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M1 — provider DeepSeek thật** (streaming + retry + map lỗi). Chưa có vòng lặp agent.
+Trạng thái: **M2 — session log bền vững** (JSONL + fsync + lock + repair, resume, fork). Chưa có
+vòng lặp agent.
 
 ## Lệnh
 
@@ -21,11 +22,14 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `src/llm/sse.ts` | parser SSE không phụ thuộc thư viện (cắt chunk tuỳ ý, CRLF, UTF-8) | M1 |
 | `src/llm/deepseek.ts` | provider DeepSeek: stream chat-completions, gom `tool_call` theo index, retry 429/5xx/network có backoff + jitter, map lỗi sang mã ổn định, redact API key | M1 |
 | `src/llm/errors.ts` | `ProviderError`, bộ mã lỗi, `redactSecret` | M1 |
+| `src/llm/assemble.ts` | gộp delta stream thành một response hoàn chỉnh (gom `tool_call` theo index, báo `malformedToolArgs`) | M2 |
 | `src/session/events.ts` | union `SessionEvent` + luật `seq` liên tục | M0 |
 | `src/session/projection.ts` | `project()` / `replay()`: dựng transcript từ log, xử lý compaction | M0 |
+| `src/session/log.ts` | log append-only JSONL: fsync từng event, lock file (chống 2 writer, tha lock chết), **sửa torn tail** khi mở, từ chối log hỏng giữa dòng / nhảy seq, `forkSessionLog`, `listSessionIds` | M2 |
 | `src/tools/registry.ts` | `ToolDef`, `ToolRegistry`, dispatch + gate + timeout + mã lỗi | M0 |
 | `src/policy/gate.ts` | `PolicyGate`, `SandboxMode`, `Action` | M0 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
+| `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
 
 ### Cắm provider thật
 

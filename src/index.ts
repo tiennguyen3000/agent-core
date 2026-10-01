@@ -63,6 +63,27 @@ export { assertContiguousSeqs, nextSeq } from './session/events.js';
 export { project, replay } from './session/projection.js';
 export type { ProjectionOptions, ProjectionResult } from './session/projection.js';
 
+export { assembleResponse } from './llm/assemble.js';
+export type { CompletedResponse, MalformedToolArgs } from './llm/assemble.js';
+
+export {
+  SessionLogError,
+  SessionLogErrorCode,
+  forkSessionLog,
+  listSessionIds,
+  openSessionLog,
+  readSessionLog,
+  sessionDir,
+  sessionLogPath,
+} from './session/log.js';
+export type {
+  ForkSessionLogOptions,
+  OpenSessionLogOptions,
+  SessionEventInput,
+  SessionLog,
+  SessionLogErrorCodeValue,
+} from './session/log.js';
+
 export type {
   JobRegistry,
   SandboxedFs,
