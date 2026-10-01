@@ -1,3 +1,4 @@
+import type { JobSnapshot } from '../../src/jobs/types.js';
 import type { Action, PolicyDecision, PolicyGate, SandboxMode } from '../../src/policy/gate.js';
 import type {
   JobRegistry,
@@ -36,16 +37,51 @@ export function recordingShell(): ShellRunner & { readonly commands: string[] } 
   };
 }
 
+/**
+ * In-memory job port for tools that never really spawn anything. Commands are
+ * recorded and immediately reported as finished, so tests stay child-free.
+ */
 export function recordingJobs(): JobRegistry & { readonly spawned: string[] } {
   const spawned: string[] = [];
+  const snapshots = new Map<string, JobSnapshot>();
   return {
     spawned,
-    spawn: async (command) => {
+    spawn: async (command, options) => {
+      const id = `job-${String(spawned.length + 1)}`;
       spawned.push(command);
-      return { jobId: `job-${spawned.length}` };
+      snapshots.set(id, {
+        id,
+        command,
+        cwd: options.cwd,
+        pid: undefined,
+        status: 'exited',
+        startedAt: 0,
+        endedAt: 1,
+        exitCode: 0,
+        signal: null,
+        outputChars: 0,
+        droppedChars: 0,
+        error: undefined,
+      });
+      return { jobId: id };
     },
     kill: async (_jobId: string) => undefined,
-    list: () => [...spawned],
+    list: () => [...snapshots.keys()],
+    snapshot: (jobId) => snapshots.get(jobId),
+    read: (jobId) => {
+      const snapshot = snapshots.get(jobId);
+      return snapshot === undefined
+        ? undefined
+        : { snapshot, text: '', nextCursor: 0, lossy: false };
+    },
+    wait: async (jobId) => {
+      const snapshot = snapshots.get(jobId);
+      if (snapshot === undefined) {
+        throw new Error(`Unknown job: ${jobId}`);
+      }
+      return { outcome: 'settled', snapshot };
+    },
+    drainNotices: () => [],
   };
 }
 
@@ -57,6 +93,7 @@ export interface CtxOptions {
   readonly workdir?: string;
   readonly fs?: SandboxedFs;
   readonly reads?: ToolCtx['reads'];
+  readonly jobs?: JobRegistry;
 }
 
 export function makeCtx(options: CtxOptions = {}): ToolCtx {
@@ -67,7 +104,7 @@ export function makeCtx(options: CtxOptions = {}): ToolCtx {
     workdir,
     fs: options.fs ?? memoryFs({ root: workdir }),
     shell: recordingShell(),
-    jobs: recordingJobs(),
+    jobs: options.jobs ?? recordingJobs(),
     ...(options.reads === undefined ? {} : { reads: options.reads }),
     requestApproval: async (action) => {
       approvals.push(action);

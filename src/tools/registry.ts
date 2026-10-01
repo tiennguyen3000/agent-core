@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import { retainOutput } from '../context/spill.js';
 import type { SpillStore } from '../context/spill.js';
+import type { JobRegistry } from '../jobs/types.js';
 import type { JsonSchemaObject, ToolSchema } from '../llm/types.js';
 import type { Action, PolicyGate } from '../policy/gate.js';
 import type { ReadTracker } from './observation.js';
@@ -36,9 +37,11 @@ export interface ShellResult {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+  /** Set when the command ended because of a signal (including cancellation). */
+  readonly signal?: string;
 }
 
-/** Shell port. One-shot bash lands in M4. */
+/** Shell port. Implemented by `createBashShellRunner` (M4). */
 export interface ShellRunner {
   exec(
     command: string,
@@ -46,12 +49,11 @@ export interface ShellRunner {
   ): Promise<ShellResult>;
 }
 
-/** Background job port. The process registry lands in M4. */
-export interface JobRegistry {
-  spawn(command: string, options: { readonly cwd: string }): Promise<{ readonly jobId: string }>;
-  kill(jobId: string): Promise<void>;
-  list(): readonly string[];
-}
+/**
+ * Background job port. Defined in `src/jobs/types.ts` and re-exported here so
+ * the tools keep importing it from one place (M4).
+ */
+export type { JobNotice, JobOutput, JobRegistry, JobSnapshot, JobStatus, JobWaitResult } from '../jobs/types.js';
 
 export interface ToolCtx {
   /**
@@ -117,14 +119,16 @@ interface ToolDefBase<A> {
 
 /**
  * A tool is either approval-free, or it declares how to derive the `Action`
- * that the gate and the approval prompt evaluate.
+ * that the gate and the approval prompt evaluate. The action receives the
+ * context too, because some decisions need the workspace root (a shell command
+ * carries its cwd).
  */
 export type ToolDef<A = unknown> = ToolDefBase<A> &
   (
     | { readonly requiresApproval: 'never' }
     | {
         readonly requiresApproval: 'policy' | 'always';
-        readonly action: (args: A) => Action;
+        readonly action: (args: A, ctx: ToolCtx) => Action;
       }
   );
 
@@ -134,7 +138,7 @@ export type ToolDef<A = unknown> = ToolDefBase<A> &
  * union with a predicate collapses the negative branch to `never`.
  */
 type ApprovalTool = {
-  readonly action: (args: unknown) => Action;
+  readonly action: (args: unknown, ctx: ToolCtx) => Action;
 };
 
 export class ToolTimeoutError extends Error {
@@ -385,7 +389,7 @@ export class ToolRegistry {
       );
     }
 
-    const action = actionFor(args);
+    const action = actionFor(args, ctx);
 
     if (tool.requiresApproval === 'always') {
       const approved = await ctx.requestApproval(action);

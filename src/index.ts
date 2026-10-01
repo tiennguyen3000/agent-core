@@ -98,6 +98,32 @@ export type {
 export { ToolErrorCode, ToolRegistry, ToolTimeoutError } from './tools/registry.js';
 export type { ToolErrorCodeValue, ToolRegistryOptions } from './tools/registry.js';
 
+export {
+  DEFAULT_ENV_ALLOWLIST,
+  createProcessJobRegistry,
+} from './jobs/registry.js';
+export type { ProcessJobRegistryOptions } from './jobs/registry.js';
+export type {
+  JobNotice,
+  JobOutput,
+  JobSnapshot,
+  JobSpawnOptions,
+  JobStatus,
+  JobWaitOptions,
+  JobWaitResult,
+} from './jobs/types.js';
+
+export { createBashShellRunner } from './shell/bash.js';
+export type { BashShellRunnerOptions } from './shell/bash.js';
+
+export {
+  createBashTool,
+  createJobKillTool,
+  createJobListTool,
+  createJobOutputTool,
+} from './tools/bash.js';
+export type { BashToolConfig } from './tools/bash.js';
+
 export { ReadTracker } from './tools/observation.js';
 export type { ReadStatus } from './tools/observation.js';
 

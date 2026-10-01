@@ -234,11 +234,14 @@ describe('fs tool metadata', () => {
     // `action` only exists on the approval-carrying half of the union.
     const writeAction = write.requiresApproval === 'never' ? undefined : write.action;
     const editAction = edit.requiresApproval === 'never' ? undefined : edit.action;
-    expect(writeAction?.({ path: 'a.txt', content: '' })).toEqual({
+    const actionCtx = makeCtx();
+    expect(writeAction?.({ path: 'a.txt', content: '' }, actionCtx)).toEqual({
       kind: 'fs.write',
       path: 'a.txt',
     });
-    expect(editAction?.({ path: 'src/app.ts', old_string: 'a', new_string: 'b' })).toEqual({
+    expect(
+      editAction?.({ path: 'src/app.ts', old_string: 'a', new_string: 'b' }, actionCtx),
+    ).toEqual({
       kind: 'fs.write',
       path: 'src/app.ts',
     });

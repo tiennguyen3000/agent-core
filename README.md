@@ -1,8 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M3 — tool fs/glob/grep** (read-before-edit, chặn ghi ngoài workspace, spill output
-lớn, dispatch song song). Chưa có vòng lặp agent.
+Trạng thái: **M4 — bash + job registry** (tiến trình con thật, ring buffer, kill theo process
+group). Chưa có vòng lặp agent.
 
 ## Lệnh
 
@@ -34,6 +34,10 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `src/context/tokens.ts` | ước lượng token theo ký tự (chỉ để cắt output; số thật lấy từ provider) | M3 |
 | `src/context/spill.ts` | output quá lớn → head + tail + đường dẫn file đọc lại; store lỗi thì **không mất** output | M3 |
 | `src/policy/gate.ts` | `PolicyGate`, `SandboxMode`, `Action` | M0 |
+| `src/jobs/registry.ts` | job registry thật: ring buffer có chặn (báo `droppedChars`), `kill` theo **process group** (SIGTERM → SIGKILL sau grace), `wait` có deadline, `drainNotices`, env allowlist | M4 |
+| `src/jobs/types.ts` | hợp đồng `JobRegistry`, `JobSnapshot`, `JobOutput`, `JobNotice` | M4 |
+| `src/shell/bash.ts` | `ShellRunner` thật: stdout/stderr tách riêng, cwd, cancel giết process group, cap output có thông báo | M4 |
+| `src/tools/bash.ts` | `bash` + `job_output` + `job_list` + `job_kill` | M4 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
 | `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
 
@@ -46,6 +50,10 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `fs_grep` | có | không | regex, `glob` lọc file, cap 100 match / 1 MiB mỗi file / 8 MiB mỗi lần quét |
 | `fs_write` | không | `policy` | ghi đè cả file, bắt buộc đọc trước |
 | `fs_edit` | không | `policy` | thay literal, từ chối khi mơ hồ (`E_AMBIGUOUS_MATCH`) |
+| `bash` | không | `policy` | mọi lệnh là job; quá `timeout_ms` thì **trả job id** chứ không giết; cancel thì giết |
+| `job_output` | có | không | đọc delta theo `since`, `wait_ms` để chờ job xong |
+| `job_list` | có | không | trạng thái, exit code, thời lượng, lệnh |
+| `job_kill` | không | không | SIGTERM → SIGKILL, chỉ trả về khi tiến trình đã chết |
 
 `fs_read_image` **chưa có**: `Message.content` hiện là text-only, nên ảnh cần tầng attachment
 (M6) trước khi có thể đưa vào hội thoại.
@@ -96,7 +104,7 @@ Tổng ~6 request nhỏ, `max_tokens` bị chặn.
 
 ## Chưa có (theo milestone)
 
-M4 bash + jobs · M5 sandbox + approval (sandbox cho `ctx.fs`/`ctx.shell`) ·
-M6 token meter/compaction + attachment (để có `fs_read_image`) · M7 subagent + skills + MCP · M8 CLI.
+M5 sandbox + approval cho `ctx.fs`/`ctx.shell` · M6 token meter/compaction + attachment (để có
+`fs_read_image`) · M7 subagent + skills + MCP · M8 CLI + vòng lặp agent.
 
 Xem `docs/ARCHITECTURE.md` để hiểu luồng dữ liệu và `docs/blueprint.md` cho kế hoạch đầy đủ.

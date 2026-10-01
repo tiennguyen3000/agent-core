@@ -36,7 +36,8 @@ luôn tái tạo được đúng kết quả cũ, và người dùng vẫn đọ
 
 **Side effect qua gate (invariant 3).** `ToolRegistry.dispatch` phân loại hành động thành
 `Action`, hỏi `PolicyGate`, rồi mới chạy handler. Không mount gate + tool khai báo `policy`
-⇒ **fail-closed** (`E_POLICY_DENIED`), không có đường tắt.
+⇒ **fail-closed** (`E_POLICY_DENIED`), không có đường tắt. Từ M4, `action(args, ctx)` nhận thêm
+context vì có quyết định cần workspace root — lệnh shell mang `cwd` của nó.
 
 *Ranh giới hiện tại (nói rõ để không hiểu nhầm):* tool khai báo `requiresApproval: 'never'` **không**
 gọi gate — đó là các tool không cần hỏi duyệt (đọc file trong workspace, todo). Việc thi hành
@@ -122,6 +123,29 @@ Kết quả trả về theo thứ tự gọi, không theo thứ tự hoàn thàn
 head + tail + thông báo; nếu có `SpillStore` thì toàn văn nằm trong file để model đọc lại
 (`spillPath`). Store lỗi thì **giữ nguyên output gốc** — mất file chấp nhận được, mất dữ liệu thì
 không.
+
+## Tầng job (M4)
+
+**Mọi lệnh là job.** `bash` spawn qua job registry rồi *chờ*. Nếu lệnh còn chạy khi hết
+`timeout_ms`, tool trả về **job id** và để tiến trình sống tiếp (`job_output` để theo dõi,
+`job_kill` để dừng) — không giết việc mà model còn cần. Ngược lại, khi **turn bị cancel** thì
+lệnh đó thuộc về turn đang chết, nên tool giết nó và trả `E_CANCELLED`: cancel không để lại
+tiến trình mồ côi.
+
+**Bộ nhớ có chặn.** Output nằm trong ring buffer (`maxOutputChars`, mặc định 256 KiB). Vượt ngưỡng
+thì cắt từ đầu và **đếm** phần đã mất (`droppedChars`), lần đọc sau báo `lossy` để caller biết dữ
+liệu không còn đầy đủ. Một lệnh in 10 GB không làm phình heap của agent.
+
+**Kill là thật.** Tiến trình con được spawn `detached` (process group riêng trên POSIX) và
+`kill` gửi tín hiệu vào **cả nhóm** — nên `bash -c "a | b"` chết trọn, không sót tiến trình cháu.
+SIGTERM trước, SIGKILL sau `killGraceMs`, và `kill` chỉ resolve khi tiến trình đã chết thật.
+
+**Env allowlist.** Con chỉ nhận các biến trong allowlist (PATH, HOME, LANG, TERM, TMPDIR, SHELL,
+USER…) cộng `envPassthrough` của deployment. Secret của agent không tự động chảy vào mọi lệnh
+(invariant 9).
+
+**`ShellRunner` là đường đơn giản.** Tool `bash` đi qua job registry; `createBashShellRunner`
+phục vụ các tool cần stdout/stderr tách riêng, cũng kill theo process group khi bị huỷ.
 
 ## Quy ước
 
