@@ -1,7 +1,7 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M0–M8 xong** — chạy được như một CLI thật (`pnpm agent "task"`).
+Trạng thái: **M0–M8 xong** — chạy được như một CLI thật, cài được thành lệnh toàn cục.
 
 ## Lệnh
 
@@ -10,24 +10,38 @@ pnpm install
 pnpm typecheck     # tsc --noEmit, 0 error
 pnpm lint          # eslint, 0 warning/error
 pnpm test          # vitest, offline, không phụ thuộc thời gian
+pnpm build         # tsc -p tsconfig.build.json -> dist/
+pnpm verify:pack   # build rồi chạy thử cả dist/ lẫn bin/
 ```
+
+## Cài như lệnh toàn cục
+
+```bash
+pnpm install
+pnpm build                 # bắt buộc: bin/ nạp dist/, không nạp src/
+npm install -g .           # symlink thư mục này vào node prefix toàn cục
+agent-core --version       # -> agent-core 0.1.0
+```
+
+`npm install -g .` tạo **symlink** tới repo này, nên sau mỗi lần sửa source phải chạy lại
+`pnpm build` — nếu không, lệnh toàn cục vẫn chạy bản `dist/` cũ. Gỡ ra bằng
+`npm uninstall -g agent-core`.
 
 ## Chạy nó
 
 ```bash
-pnpm agent --help                                  # không cần key
-pnpm agent --list                                  # liệt kê session đã lưu
+pnpm agent --help                                  # qua tsx, không cần build
+agent-core --help                                  # qua bản đã build, không cần tsx
 
 export DEEPSEEK_API_KEY=sk-...
-pnpm agent "đọc src/index.ts và liệt kê các export"
-pnpm agent --workspace ~/code/project --yes "sửa test đang fail"
-pnpm agent --resume session-1730000000000 "giờ thêm test cho phần vừa sửa"
+agent-core "đọc src/index.ts và liệt kê các export"
+agent-core --workspace ~/code/project --yes "sửa test đang fail"
+agent-core --resume session-1730000000000 "giờ thêm test cho phần vừa sửa"
 ```
 
-Không có bước build: `pnpm agent` chạy TypeScript trực tiếp qua `tsx`. Trong REPL có
-`/help`, `/cost`, `/compact`, `/model <name>`, `/resume <id>`, `/fork [id]`, `/export`, `/quit`.
-Mặc định mode là `workspace-write`: ghi trong workspace thì tự do, ghi ra ngoài bị **từ chối**
-(thêm `--escalate` để hỏi, `--yes` để tự đồng ý mọi thứ).
+Trong REPL có `/help`, `/cost`, `/compact`, `/model <name>`, `/resume <id>`, `/fork [id]`,
+`/export`, `/quit`. Mặc định mode là `workspace-write`: ghi trong workspace thì tự do, ghi ra ngoài
+bị **từ chối** (thêm `--escalate` để hỏi, `--yes` để tự đồng ý mọi thứ).
 
 ## Đã có
 
@@ -76,6 +90,8 @@ Mặc định mode là `workspace-write`: ghi trong workspace thì tự do, ghi 
 | `src/context/cost.ts` | bảng giá theo model + `estimateCost` + báo cáo token/chi phí cuối phiên | M8 |
 | `src/app/runtime.ts` | composition root: ghép sandbox + log + tool + skills + subagent + context + loop, ghi mọi event của loop vào log | M8 |
 | `src/cli/main.ts` | `parseArgs` + `runCli`: một lệnh hoặc REPL, stream câu trả lời, dòng tool, hỏi duyệt, slash command, exit code | M8 |
+| `bin/agent-core.mjs` | entry point toàn cục: nạp `dist/cli/main.js`, tự đặt exit code | M8 |
+| `tsconfig.build.json` | cấu hình build riêng: `rootDir src` → `outDir dist`, có declaration + sourcemap, **không** biên dịch `tests/` | M8 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
 | `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
 
