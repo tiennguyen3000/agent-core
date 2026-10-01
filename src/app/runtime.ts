@@ -276,15 +276,25 @@ export async function createAgentRuntime(options: AgentRuntimeOptions): Promise<
     .filter((part) => part.trim().length > 0)
     .join('\n\n');
 
-  await log.append({
-    t: 'session.created',
-    sessionId: options.sessionId,
-    cwd: options.workspaceRoot,
-    model: options.model,
-  });
+  // A session is created once. Reopening an existing one must not add a second
+  // `session.created`, and turn numbering continues where the log stopped.
+  const existing = log.readAll();
+  if (existing.length === 0) {
+    await log.append({
+      t: 'session.created',
+      sessionId: options.sessionId,
+      cwd: options.workspaceRoot,
+      model: options.model,
+    });
+  }
 
   let totals: Usage = ZERO_USAGE;
-  let turn = 0;
+  let turn = existing.reduce((highest, event) => {
+    if (event.t === 'turn.start' || event.t === 'turn.end') {
+      return Math.max(highest, event.turn);
+    }
+    return highest;
+  }, 0);
 
   return {
     sessionId: options.sessionId,

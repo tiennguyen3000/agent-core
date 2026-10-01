@@ -170,6 +170,14 @@ describe('agent runtime', () => {
 
     expect(second.log.count).toBeGreaterThan(eventsAfterFirst);
     expect(provider.requests[0]?.messages[0]).toEqual({ role: 'user', content: 'remember this' });
+    // Reopening a session must not create it twice, and turn numbers continue.
+    const events = second.log.readAll();
+    expect(events.filter((event) => event.t === 'session.created')).toHaveLength(1);
+    const turns = events
+      .filter((event): event is Extract<SessionEvent, { t: 'turn.start' }> => event.t === 'turn.start')
+      .map((event) => event.turn);
+    expect(turns).toEqual([1, 2]);
+    expect(second.nextTurn()).toBe(3);
   });
 
   it('compacts once the context window is under pressure', async () => {
