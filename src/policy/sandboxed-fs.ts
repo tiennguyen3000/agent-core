@@ -30,6 +30,10 @@ export function createSandboxedFs(options: SandboxedFsOptions): SandboxedFs {
       return await options.inner.read(path);
     },
 
+    async readBytes(path) {
+      return await options.inner.readBytes(path);
+    },
+
     async write(path, content) {
       const verdict = checkWrite(options, path);
       if (!verdict.allowed) {

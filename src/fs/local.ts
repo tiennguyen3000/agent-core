@@ -29,6 +29,10 @@ export function createLocalFs(options: LocalFsOptions = {}): SandboxedFs {
       return await readFile(path, 'utf8');
     },
 
+    async readBytes(path) {
+      return new Uint8Array(await readFile(path));
+    },
+
     async write(path, content) {
       await mkdir(dirname(path), { recursive: true });
       const temporary = join(dirname(path), `.${String(process.pid)}-${nextId()}.tmp`);

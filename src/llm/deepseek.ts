@@ -109,10 +109,42 @@ interface OpenFailure {
 
 type OpenResult = OpenSuccess | OpenFailure;
 
+/**
+ * Content for the wire. A message with image parts is sent as an OpenAI-style
+ * content array (`image_url` with a data URI); everything else stays a plain
+ * string so the common path is unchanged (M6).
+ */
+function toWireContent(message: Message): unknown {
+  const parts = message.parts ?? [];
+  if (!parts.some((part) => part.type === 'image')) {
+    return message.content;
+  }
+  const wire: unknown[] = [];
+  const hasTextPart = parts.some((part) => part.type === 'text');
+  // `content` is the plain-text rendering; when explicit text parts exist they
+  // are authoritative, otherwise the text would be sent twice.
+  if (!hasTextPart && message.content.length > 0) {
+    wire.push({ type: 'text', text: message.content });
+  }
+  for (const part of parts) {
+    if (part.type === 'text') {
+      wire.push({ type: 'text', text: part.text });
+      continue;
+    }
+    wire.push({
+      type: 'image_url',
+      image_url: { url: `data:${part.mimeType};base64,${part.base64}` },
+    });
+  }
+  return wire;
+}
+
 function toWireMessages(system: string, messages: readonly Message[]): Record<string, unknown>[] {
   const wire: Record<string, unknown>[] = [{ role: 'system', content: system }];
   for (const message of messages) {
     if (message.role === 'tool') {
+      // Tool results stay text: the chat-completions tool role has no image
+      // form, so an image is attached on the next user/assistant turn instead.
       wire.push({
         role: 'tool',
         tool_call_id: message.toolCallId ?? '',
@@ -123,7 +155,7 @@ function toWireMessages(system: string, messages: readonly Message[]): Record<st
     if (message.role === 'assistant' && (message.toolCalls?.length ?? 0) > 0) {
       wire.push({
         role: 'assistant',
-        content: message.content,
+        content: toWireContent(message),
         tool_calls: (message.toolCalls ?? []).map((call) => ({
           id: call.id,
           type: 'function',
@@ -132,7 +164,7 @@ function toWireMessages(system: string, messages: readonly Message[]): Record<st
       });
       continue;
     }
-    wire.push({ role: message.role, content: message.content });
+    wire.push({ role: message.role, content: toWireContent(message) });
   }
   return wire;
 }

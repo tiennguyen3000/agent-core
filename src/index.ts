@@ -200,6 +200,50 @@ export type {
   SpillStore,
 } from './context/spill.js';
 
+export {
+  createTokenMeter,
+  measureRequest,
+  totalPromptTokens,
+} from './context/meter.js';
+export type {
+  ContextPressure,
+  PressureSource,
+  TokenMeter,
+  TokenMeterOptions,
+} from './context/meter.js';
+
+export { DEFAULT_SUMMARY_SYSTEM, createCompactor } from './context/compactor.js';
+export type {
+  CompactionEventInput,
+  CompactionPlan,
+  CompactionReason,
+  Compactor,
+  CompactorOptions,
+  ContextPressureLike,
+  SummarizeOptions,
+  SummarizeResult,
+} from './context/compactor.js';
+
+export { createContextManager } from './context/manager.js';
+export type {
+  CompactOutcome,
+  ContextManager,
+  ContextManagerOptions,
+} from './context/manager.js';
+
+export {
+  createLocalAttachmentStore,
+  sniffImageMime,
+} from './context/attachments.js';
+export type {
+  Attachment,
+  AttachmentStore,
+  LocalAttachmentStoreOptions,
+} from './context/attachments.js';
+
+export { createReadImageTool } from './tools/images.js';
+export type { ReadImageConfig } from './tools/images.js';
+
 export type {
   Action,
   PolicyDecision,

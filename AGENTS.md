@@ -35,7 +35,8 @@ Test phải chạy **offline**, không dùng timer, không gọi mạng. Chạy 
    `ctx.fs`. Shell chỉ được nhốt thật khi có OS sandbox backend (kiểm tra `shell.confinement`).
 4. Schema tool sinh từ zod, không viết tay bản thứ hai.
 5. Cancel lan truyền tới provider, tool, tiến trình con; không rò tiến trình.
-6. Budget được thực thi: `maxSteps`, `tokenBudget`, `wallClockMs`, `toolTimeout`.
+6. Budget được thực thi: `maxSteps`, `tokenBudget`, `wallClockMs`, `toolTimeout`; áp lực context lấy
+   từ `usage` thật của provider, chỉ ước lượng khi chưa có usage.
 7. Tool lỗi trả mã ổn định + gợi ý khắc phục.
 8. Output vượt `maxInlineTokens` bị spill ra file; model thấy head + tail + path.
 9. Secret chỉ từ env, không vào log/error.

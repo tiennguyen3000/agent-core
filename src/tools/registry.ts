@@ -27,6 +27,8 @@ export interface DirEntry {
 /** Filesystem port. The sandboxed implementation lands in M5. */
 export interface SandboxedFs {
   read(path: string): Promise<string>;
+  /** Raw bytes, needed by `fs_read_image` (M6). */
+  readBytes(path: string): Promise<Uint8Array>;
   write(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   /** Direct children of `dir`; the tools recurse through this (M3). */
@@ -112,6 +114,7 @@ export const ToolErrorCode = {
   AmbiguousMatch: 'E_AMBIGUOUS_MATCH',
   PathEscape: 'E_PATH_ESCAPE',
   Access: 'E_ACCESS',
+  TooLarge: 'E_TOO_LARGE',
 } as const;
 
 export type ToolErrorCodeValue = (typeof ToolErrorCode)[keyof typeof ToolErrorCode];

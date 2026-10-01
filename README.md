@@ -1,8 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M5 — sandbox + approval** (policy gate, `ctx.fs` bị nhốt thật, approval fail-closed,
-audit mọi quyết định, seam OS sandbox). Chưa có vòng lặp agent.
+Trạng thái: **M6 — context management** (token meter, pruner, compaction 1 model call, attachment
+cho ảnh). Chưa có vòng lặp agent.
 
 ## Lệnh
 
@@ -45,6 +45,11 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `src/policy/runtime.ts` | `createSandboxRuntime` ghép gate + fs + shell + approval + audit; `createLogAuditSink` đẩy audit vào session log | M5 |
 | `src/shell/sandboxed.ts` | `ShellRunner` có policy: read-only từ chối chạy, có OS backend thì bọc, công bố `confinement` | M5 |
 | `src/shell/os-sandbox.ts` | seam OS sandbox + backend macOS seatbelt (`buildSeatbeltProfile`) + `probe()` | M5 |
+| `src/context/meter.ts` | `TokenMeter`: usage thật của provider thắng ước lượng; `measureRequest` chỉ dùng khi chưa có usage | M6 |
+| `src/context/compactor.ts` | `plan()` thuần (ngưỡng, giữ đuôi, không cắt rời tool call) + `summarize()` đúng **một** model call | M6 |
+| `src/context/manager.ts` | `createContextManager`: prune trước (miễn phí), compact sau; trả `CompactionEventInput` để caller ghi log | M6 |
+| `src/context/attachments.ts` | attachment store content-addressed (sha256), dedupe, `sniffImageMime` theo magic bytes | M6 |
+| `src/tools/images.ts` | `fs_read_image`: validate bằng magic bytes, lưu attachment, trả id thay vì bytes | M6 |
 | `tests/invariant-*.spec.ts` | mỗi invariant một test | M0 |
 | `tests/e2e-session-round.spec.ts` | E2E 1 vòng: provider → policy → log → replay → restart | M2 |
 
@@ -61,6 +66,7 @@ pnpm test          # vitest, offline, không phụ thuộc thời gian
 | `job_output` | có | không | đọc delta theo `since`, `wait_ms` để chờ job xong |
 | `job_list` | có | không | trạng thái, exit code, thời lượng, lệnh |
 | `job_kill` | không | không | SIGTERM → SIGKILL, chỉ trả về khi tiến trình đã chết |
+| `fs_read_image` | có | không | png/jpeg/webp/gif, kiểm magic bytes, lưu attachment (sha256), cap 5 MiB |
 
 `fs_read_image` **chưa có**: `Message.content` hiện là text-only, nên ảnh cần tầng attachment
 (M6) trước khi có thể đưa vào hội thoại.
@@ -111,8 +117,18 @@ Tổng ~6 request nhỏ, `max_tokens` bị chặn.
 
 ## Chưa có (theo milestone)
 
-M6 token meter/compaction + attachment (để có `fs_read_image`) · M7 subagent + skills + MCP ·
-M8 CLI + vòng lặp agent.
+M7 subagent + skills + MCP · M8 CLI + vòng lặp agent (ghép provider + tool + log + context).
+
+### Ảnh: đã có gì, chưa kiểm chứng gì
+
+- `fs_read_image` **lưu** ảnh (content-addressed) và trả attachment id; `Message.parts` + mapping
+  trong provider đã gửi ảnh dạng `image_url` data-URI — phần này **có test offline** (assert body
+  gửi đi).
+- **Chưa chạy thật với model vision**: tài khoản DeepSeek đang dùng chỉ có `deepseek-flash` và
+  `deepseek-v4-pro`, không có model thị giác. Vì vậy đường "ảnh → model" được coi là *đã nối dây
+  nhưng chưa xác nhận đầu cuối*.
+- Pruner hoạt động ở tầng projection: model thấy head + tail, còn văn bản đầy đủ vẫn nằm trong log
+  (không tốn model call, không mất dữ liệu).
 
 ### Sandbox: điều gì đã thật, điều gì chưa
 

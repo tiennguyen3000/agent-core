@@ -26,6 +26,21 @@ export interface ToolCall {
   readonly args: unknown;
 }
 
+/**
+ * A structured message part. `content` stays the plain-text rendering; `parts`
+ * is the richer form a provider may need (an image cannot be expressed as a
+ * string, which is why this exists — M6).
+ */
+export type ContentPart =
+  | { readonly type: 'text'; readonly text: string }
+  | {
+      readonly type: 'image';
+      readonly mimeType: string;
+      readonly base64: string;
+      /** Set when the bytes live in the attachment store. */
+      readonly attachmentId?: string;
+    };
+
 export interface Message {
   readonly role: Role;
   readonly content: string;
@@ -33,6 +48,8 @@ export interface Message {
   readonly toolCallId?: string;
   /** Set on `assistant` messages that requested tools. */
   readonly toolCalls?: readonly ToolCall[];
+  /** Optional structured form; providers use it when present. */
+  readonly parts?: readonly ContentPart[];
 }
 
 /**

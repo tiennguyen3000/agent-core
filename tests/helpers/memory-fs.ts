@@ -11,6 +11,8 @@ import type { DirEntry, SandboxedFs } from '../../src/index.js';
 export interface MemoryFs extends SandboxedFs {
   readonly root: string;
   readonly files: Map<string, string>;
+  /** Raw byte contents, for image reads. */
+  readonly binary: Map<string, Uint8Array>;
   readonly dirs: Set<string>;
   /** Paths whose read throws, for exercising failure branches. */
   readonly unreadable: Set<string>;
@@ -21,6 +23,8 @@ export interface MemoryFs extends SandboxedFs {
 export interface MemoryFsOptions {
   readonly root?: string;
   readonly files?: Record<string, string>;
+  /** Raw byte contents keyed by workdir-relative path. */
+  readonly binary?: Record<string, Uint8Array>;
   /** Extra empty directories to materialise. */
   readonly dirs?: readonly string[];
 }
@@ -40,7 +44,16 @@ function ancestorsOf(root: string, absolute: string): string[] {
 export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
   const root = options.root ?? '/ws';
   const files = new Map<string, string>();
+  const binary = new Map<string, Uint8Array>();
   const dirs = new Set<string>([root]);
+
+  for (const [path, bytes] of Object.entries(options.binary ?? {})) {
+    const absolute = join(root, path);
+    binary.set(absolute, bytes);
+    for (const dir of ancestorsOf(root, absolute)) {
+      dirs.add(dir);
+    }
+  }
 
   for (const [path, content] of Object.entries(options.files ?? {})) {
     const absolute = join(root, path);
@@ -62,6 +75,7 @@ export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
   return {
     root,
     files,
+    binary,
     dirs,
     unreadable,
     snapshot: () =>
@@ -81,13 +95,27 @@ export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
       }
       return value;
     },
+    readBytes: async (path) => {
+      if (unreadable.has(path)) {
+        throw new Error(`EACCES: ${path}`);
+      }
+      const raw = binary.get(path);
+      if (raw !== undefined) {
+        return raw;
+      }
+      const value = files.get(path);
+      if (value === undefined) {
+        throw new Error(`ENOENT: ${path}`);
+      }
+      return new TextEncoder().encode(value);
+    },
     write: async (path, content) => {
       files.set(path, content);
       for (const dir of ancestorsOf(root, path)) {
         dirs.add(dir);
       }
     },
-    exists: async (path) => files.has(path) || dirs.has(path),
+    exists: async (path) => files.has(path) || binary.has(path) || dirs.has(path),
     list: async (dir) => {
       if (files.has(dir)) {
         throw new Error(`ENOTDIR: ${dir}`);
@@ -97,7 +125,7 @@ export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
       }
       const prefix = `${dir}/`;
       const entries = new Map<string, boolean>();
-      for (const path of [...files.keys(), ...dirs]) {
+      for (const path of [...files.keys(), ...binary.keys(), ...dirs]) {
         if (!path.startsWith(prefix)) {
           continue;
         }

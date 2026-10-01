@@ -175,6 +175,33 @@ workspace + temp grant. Trên máy phát triển này `sandbox-exec` tồn tại
 (`sandbox_apply: Operation not permitted`), nên `probe()` trả `available: false` — và đó chính là
 lý do seam này tồn tại thay vì một giả định.
 
+## Quản lý context (M6)
+
+**Số thật thắng ước lượng.** `TokenMeter` chỉ chấp nhận ước lượng khi chưa có usage nào; sau lần
+response đầu tiên, `source` chuyển thành `'usage'` và mọi `recordEstimate` sau đó bị bỏ qua. Kích
+thước prompt là `inputTokens + cacheReadTokens (+ cacheWriteTokens)` — đúng như đo được ở live test,
+và `surfaceTokens` cộng thêm `outputTokens` vì câu trả lời cũng nằm trong request kế tiếp.
+
+**Prune trước, tóm tắt sau.** Cắt tool result là việc *miễn phí* (chỉ đổi projection, văn bản gốc
+vẫn trong log), nên nó bật sớm hơn (`pruneRatio` mặc định 0.5) so với compaction (`thresholdRatio`
+mặc định 0.8). Nhờ vậy nhiều phiên được giải phóng áp lực mà không tốn model call nào.
+
+**Compaction tốn đúng một request.** `plan()` thuần và miễn phí: nó chọn `coveredTo` bằng cách đi
+ngược từ cuối, cộng dồn token của phần đuôi muốn giữ, rồi **lùi biên lại** nếu phần đuôi bắt đầu
+bằng một tool result mồ côi — nếu không, projection sẽ bỏ nó và model mất kết quả. `summarize()`
+sau đó chạy một request không tool, và kết quả được trả về dưới dạng `CompactionEventInput` để
+caller ghi vào log: **log vẫn là nơi ghi duy nhất**.
+
+**Chuỗi compaction không chồng summary.** Compaction mới luôn phủ từ seq 1; projection coi một
+compaction là "bị phủ" khi có compaction khác phủ **nhiều hơn** nó (`other.coveredTo >
+candidate.coveredTo`) rồi ẩn summary cũ. Luật này phải bất đối xứng: nếu đối xứng thì hai range
+lồng nhau sẽ triệt tiêu lẫn nhau và **không** summary nào tồn tại (đúng lỗi đã bị test bắt).
+
+**Ảnh.** `fs_read_image` không nhét bytes vào transcript: nó kiểm magic bytes, lưu
+content-addressed (sha256, dedupe) và trả attachment id. `Message.parts` + mapping `image_url`
+data-URI trong provider là đường đưa ảnh tới model; phần mapping có test offline, còn đầu cuối thì
+chưa xác nhận vì tài khoản đang dùng không có model thị giác.
+
 ## Quy ước
 
 - Mọi import nội bộ dùng đuôi `.js` (NodeNext ESM).
