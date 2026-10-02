@@ -9,7 +9,7 @@
  * sandbox preserves local read behaviour and confines *effects*.
  */
 
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { Action, PolicyDecision, PolicyGate, PolicyOutcome, SandboxMode } from './gate.js';
 
 export interface SandboxScope {
@@ -23,13 +23,16 @@ export function toAbsolute(scope: SandboxScope, path: string): string {
   return isAbsolute(path) ? resolve(path) : resolve(scope.workspaceRoot, path);
 }
 
+/**
+ * Is `absolute` the root itself or below it?
+ *
+ * A string prefix check with `/` is wrong on Windows twice over: children are
+ * joined with `\`, and paths there are case-insensitive. `relative` handles
+ * both, so a write to `<root>\notes.md` counts as inside `<root>`.
+ */
 function isWithin(root: string, absolute: string): boolean {
-  const relative = resolve(root) === absolute ? '' : absolute;
-  if (relative === '') {
-    return true;
-  }
-  const rootWithSlash = root.endsWith('/') ? root : `${root}/`;
-  return absolute === resolve(root) || absolute.startsWith(rootWithSlash);
+  const rel = relative(resolve(root), resolve(absolute));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 export interface WriteVerdict {

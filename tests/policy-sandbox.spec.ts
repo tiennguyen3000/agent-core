@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkWrite, createSandboxPolicy } from '../src/index.js';
 import type { PolicyAuditEvent, SandboxMode } from '../src/index.js';
@@ -55,6 +56,9 @@ describe('checkWrite', () => {
 });
 
 describe('sandbox policy gate', () => {
+  // The policy resolves paths, so on Windows this becomes D:\\etc\\hosts.
+  const hostsPath = resolve('/etc/hosts');
+
   it('denies mutations and shell execution in read-only mode', async () => {
     const gate = policy('read-only');
 
@@ -97,7 +101,7 @@ describe('sandbox policy gate', () => {
     const decision = await gate.decide({ kind: 'fs.write', path: '/etc/hosts' });
 
     expect(decision.outcome).toBe('ask');
-    expect(decision.reason).toContain('/etc/hosts');
+    expect(decision.reason).toContain(hostsPath);
   });
 
   it('allows shell and network in workspace-write and full-access', async () => {

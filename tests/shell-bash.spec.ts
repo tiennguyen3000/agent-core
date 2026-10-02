@@ -1,9 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createBashShellRunner } from '../src/index.js';
 import type { BashShellRunnerOptions, ShellRunner } from '../src/index.js';
 import { LONG_RUNNING_COMMAND, PRINT_CWD_COMMAND } from './helpers/process.js';
+import { makeTmpDir, removeTmpDir } from './helpers/tmp-dir.js';
 
 const cwd = process.cwd();
+const dirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => removeTmpDir(dir)));
+});
 
 function runner(options: BashShellRunnerOptions = {}): ShellRunner {
   return createBashShellRunner(options);
@@ -22,7 +30,7 @@ describe('bash shell runner', () => {
   });
 
   it('keeps stderr separate from stdout', async () => {
-    const result = await runner().exec('echo out; echo err >&2', {
+    const result = await runner().exec('echo out && echo err >&2', {
       cwd,
       signal: new AbortController().signal,
     });
@@ -76,10 +84,16 @@ describe('bash shell runner', () => {
   });
 
   it('caps a flooding stream and says how much it dropped', async () => {
-    const result = await runner({ maxOutputChars: 200 }).exec(
-      `node -e "process.stdout.write('b'.repeat(2000))"`,
-      { cwd, signal: new AbortController().signal },
-    );
+    // A script file rather than `node -e`: on Windows the nested quotes of an
+    // inline program do not survive `shell: true`.
+    const dir = await makeTmpDir();
+    dirs.push(dir);
+    await writeFile(join(dir, 'flood.js'), "process.stdout.write('b'.repeat(2000));\n");
+
+    const result = await runner({ maxOutputChars: 200 }).exec('node flood.js', {
+      cwd: dir,
+      signal: new AbortController().signal,
+    });
 
     expect(result.stdout).toContain('characters omitted');
     expect(result.stdout.length).toBeLessThan(400);

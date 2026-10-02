@@ -7,7 +7,9 @@
 export async function untilAsync(
   predicate: () => boolean,
   label: string,
-  attempts = 500,
+  // Generous: each attempt is an event-loop turn, and spawning cmd.exe on a
+  // Windows runner needs far more of them than a POSIX fork does.
+  attempts = 20_000,
 ): Promise<void> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (predicate()) {
