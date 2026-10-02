@@ -122,7 +122,7 @@ describe('cli', () => {
   it('prints help and exits 0', async () => {
     const io = harness();
 
-    const code = await runCli({ argv: ['--help'], io: io.io, env: {} });
+    const code = await runCli({ argv: ['--help'], io: io.io, env: { AGENT_CORE_HOME: await tmp() } });
 
     expect(code).toBe(0);
     expect(io.all()).toContain('Usage');
@@ -132,7 +132,7 @@ describe('cli', () => {
   it('refuses to start without a provider or a key', async () => {
     const io = harness();
 
-    const code = await runCli({ argv: ['do something'], io: io.io, env: {} });
+    const code = await runCli({ argv: ['do something'], io: io.io, env: { AGENT_CORE_HOME: await tmp() } });
 
     expect(code).toBe(2);
     expect(io.err.join('\n')).toContain('DEEPSEEK_API_KEY');
@@ -144,7 +144,7 @@ describe('cli', () => {
     const code = await runCli({
       argv: ['--workspace', '/definitely/not/here', 'task'],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider: new FakeProvider([textScript('x')]),
     });
 
@@ -163,7 +163,7 @@ describe('cli', () => {
     const code = await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 's1', 'fix the bug'],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -183,7 +183,7 @@ describe('cli', () => {
     const code = await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 's1', 'read notes'],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -224,7 +224,7 @@ describe('cli', () => {
         'write outside',
       ],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -242,7 +242,7 @@ describe('cli', () => {
     await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 's1', '--yes', 'go'],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -255,12 +255,12 @@ describe('cli', () => {
     await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 'listed', 'hi'],
       io: harness().io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider: new FakeProvider([textScript('ok')]),
     });
 
     const io = harness();
-    const code = await runCli({ argv: ['--list', '--session-root', sessionRoot], io: io.io, env: {} });
+    const code = await runCli({ argv: ['--list', '--session-root', sessionRoot], io: io.io, env: { AGENT_CORE_HOME: await tmp() } });
 
     expect(code).toBe(0);
     expect(io.all()).toContain('listed');
@@ -277,7 +277,7 @@ describe('cli', () => {
     const code = await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 'repl'],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -297,7 +297,7 @@ describe('cli', () => {
     await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 'shared', 'first task'],
       io: harness().io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider: new FakeProvider([textScript('first')]),
     });
 
@@ -306,7 +306,7 @@ describe('cli', () => {
     const code = await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--resume', 'shared', 'second task'],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -329,7 +329,7 @@ describe('cli', () => {
     const code = await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 'eof'],
       io: { ...io.io, prompt: async () => closed() },
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -378,7 +378,7 @@ describe('cli', () => {
           throw error;
         },
       },
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
@@ -406,12 +406,160 @@ describe('cli', () => {
     const code = await runCli({
       argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 's1', 'go'],
       io: io.io,
-      env: {},
+      env: { AGENT_CORE_HOME: await tmp() },
       provider,
     });
 
     expect(code).toBe(1);
     expect(io.err.join('\n')).toContain('E_RATE_LIMITED');
     expect(io.text()).toBe('partial');
+  });
+});
+
+describe('provider and credential commands', () => {
+  it('stores a credential from the hidden prompt and reports the file', async () => {
+    const home = await tmp();
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['key', 'anthropic'],
+      io: { ...io.io, promptSecret: async () => '  sk-ant-secret  ' },
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('stored ANTHROPIC_API_KEY');
+    expect(await readFile(join(home, '.env'), 'utf8')).toBe('ANTHROPIC_API_KEY=sk-ant-secret\n');
+  });
+
+  it('accepts a credential as an argument and keeps the others', async () => {
+    const home = await tmp();
+    await runCli({
+      argv: ['key', 'anthropic', 'sk-ant-one'],
+      io: harness().io,
+      env: { AGENT_CORE_HOME: home },
+    });
+    await runCli({
+      argv: ['key', 'openai', 'sk-openai-two'],
+      io: harness().io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    const stored = await readFile(join(home, '.env'), 'utf8');
+    expect(stored).toContain('ANTHROPIC_API_KEY=sk-ant-one');
+    expect(stored).toContain('OPENAI_API_KEY=sk-openai-two');
+  });
+
+  it('lists which providers have a credential without printing any value', async () => {
+    const home = await tmp();
+    await runCli({
+      argv: ['key', 'deepseek', 'sk-secret-value'],
+      io: harness().io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    const io = harness();
+    const code = await runCli({ argv: ['key'], io: io.io, env: { AGENT_CORE_HOME: home } });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('deepseek');
+    expect(io.all()).toContain('stored');
+    expect(io.all()).not.toContain('sk-secret-value');
+  });
+
+  it('sets the provider and model directly', async () => {
+    const home = await tmp();
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['model', 'anthropic', 'claude-opus-4-1'],
+      io: io.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    expect(code).toBe(0);
+    expect(JSON.parse(await readFile(join(home, 'config.json'), 'utf8'))).toEqual({
+      provider: 'anthropic',
+      model: 'claude-opus-4-1',
+    });
+  });
+
+  it('runs the menu and saves the chosen provider and model', async () => {
+    const home = await tmp();
+    // Answer 2 picks Anthropic; with no key the built-in list is shown, and the
+    // next answer 1 picks its first model.
+    const io = harness(['2', '1']);
+
+    const code = await runCli({ argv: ['model'], io: io.io, env: { AGENT_CORE_HOME: home } });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('Anthropic (Claude)');
+    expect(io.all()).toContain('built-in list');
+    expect(io.all()).toContain('no ANTHROPIC_API_KEY yet');
+    expect(JSON.parse(await readFile(join(home, 'config.json'), 'utf8'))).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-5',
+    });
+  });
+
+  it('passes a non-numeric menu answer through as a custom provider and model', async () => {
+    const home = await tmp();
+    const io = harness(['deepseek', 'my-custom-model']);
+
+    await runCli({ argv: ['model'], io: io.io, env: { AGENT_CORE_HOME: home } });
+
+    expect(JSON.parse(await readFile(join(home, 'config.json'), 'utf8'))).toEqual({
+      provider: 'deepseek',
+      model: 'my-custom-model',
+    });
+  });
+
+  it('starts on the configured provider', async () => {
+    const home = await tmp();
+    const workspace = await tmp();
+    await runCli({
+      argv: ['model', 'anthropic', 'claude-sonnet-4-5'],
+      io: harness().io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    const io = harness();
+    const code = await runCli({
+      argv: ['--workspace', workspace, '--session-root', await tmp(), 'task'],
+      io: io.io,
+      env: { AGENT_CORE_HOME: home },
+      provider: new FakeProvider([textScript('claude answered', { inputTokens: 7, outputTokens: 3 })]),
+    });
+
+    expect(code).toBe(0);
+    expect(io.text()).toBe('claude answered');
+  });
+
+  it('explains exactly how to fix a missing credential', async () => {
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['hello'],
+      io: io.io,
+      env: { AGENT_CORE_HOME: await tmp() },
+    });
+
+    expect(code).toBe(2);
+    expect(io.err.join('\n')).toContain('no DEEPSEEK_API_KEY found for provider "deepseek"');
+    expect(io.err.join('\n')).toContain('tiennk key deepseek');
+    expect(io.err.join('\n')).toContain('tiennk model');
+  });
+
+  it('rejects an unknown provider id', async () => {
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['model', 'nope'],
+      io: io.io,
+      env: { AGENT_CORE_HOME: await tmp() },
+    });
+
+    expect(code).toBe(2);
+    expect(io.err.join('\n')).toContain('unknown provider nope');
   });
 });

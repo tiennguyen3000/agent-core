@@ -9,10 +9,21 @@
 
 import { createInterface } from 'node:readline/promises';
 import { stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createAgentRuntime } from '../app/runtime.js';
-import { createDeepSeekProvider } from '../llm/deepseek.js';
+import {
+  PROVIDER_PRESETS,
+  fetchModels,
+  findPreset,
+  loadConfig,
+  resolveEnv,
+  saveConfig,
+  writeEnvValue,
+} from '../config/store.js';
+import type { AgentCoreConfig } from '../config/store.js';
+import { apiKeyEnvFor, createProviderFor } from '../llm/factory.js';
 import type { LLMProvider } from '../llm/types.js';
 import type { Action, SandboxMode } from '../policy/gate.js';
 import { forkSessionLog, listSessionIds, readSessionLog } from '../session/log.js';
@@ -23,24 +34,30 @@ export interface CliIo {
   readonly write: (chunk: string) => void;
   readonly err: (line: string) => void;
   readonly prompt: (question: string) => Promise<string>;
+  /** Reads a credential without echoing it; defaults to a hidden prompt. */
+  readonly promptSecret?: (question: string) => Promise<string>;
 }
 
 export interface CliOptions {
   readonly argv: readonly string[];
   readonly io?: Partial<CliIo>;
-  /** Injected by tests; otherwise built from the environment. */
+  /** Injected by tests; otherwise built from the configuration. */
   readonly provider?: LLMProvider;
   readonly env?: Record<string, string | undefined>;
   readonly cwd?: string;
 }
 
 export interface CliCommand {
-  readonly kind: 'help' | 'version' | 'list' | 'run';
+  readonly kind: 'help' | 'version' | 'list' | 'run' | 'model' | 'key';
   readonly task: string;
   readonly session: string | undefined;
   readonly resume: string | undefined;
   readonly workspace: string;
   readonly model: string;
+  /** `--provider` override, or the provider named by `model`/`key`. */
+  readonly provider: string | undefined;
+  /** Positional arguments after the subcommand. */
+  readonly args: readonly string[];
   readonly mode: SandboxMode;
   readonly sessionRoot: string;
   readonly maxSteps: number;
@@ -56,12 +73,17 @@ const HELP = `agent-core — a personal coding agent
 Usage
   agent-core [options] [task]
   agent-core --resume <session> [task]
+  agent-core model                       Choose the provider and model
+  agent-core model <provider> <model>    Set them without a menu
+  agent-core key <provider>              Store an API key (~/.agent-core/.env)
+  agent-core key                         Show which providers have a key
 
 Options
   --workspace <dir>      Workspace root (default: current directory)
   --session <id>         Start a new session with this id
   --resume <id>          Continue an existing session
-  --model <name>         Model to use (default: deepseek-flash)
+  --provider <id>        ${PROVIDER_PRESETS.map((preset) => preset.id).join(' | ')}
+  --model <name>         Model to use (default: the configured model)
   --mode <mode>          read-only | workspace-write | full-access (default: workspace-write)
   --session-root <dir>   Where sessions are stored (default: ~/.agent-core/sessions)
   --max-steps <n>        Step ceiling per turn (default: 24)
@@ -88,9 +110,11 @@ export function parseArgs(
 ): CliCommand {
   const errors: string[] = [];
   let workspace = cwd;
-  let model = env.DEEPSEEK_MODEL ?? 'deepseek-flash';
+  let model = env.DEEPSEEK_MODEL ?? '';
+  let provider: string | undefined;
   let mode: SandboxMode = 'workspace-write';
-  let sessionRoot = env.AGENT_CORE_SESSION_ROOT ?? join(env.HOME ?? cwd, '.agent-core', 'sessions');
+  let sessionRoot =
+    env.AGENT_CORE_SESSION_ROOT ?? join(env.AGENT_CORE_HOME ?? homedir(), '.agent-core', 'sessions');
   let session: string | undefined;
   let resume: string | undefined;
   let maxSteps = 24;
@@ -99,6 +123,7 @@ export function parseArgs(
   let yes = false;
   let escalate = false;
   let kind: CliCommand['kind'] = 'run';
+  const args: string[] = [];
   const taskParts: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -136,6 +161,20 @@ export function parseArgs(
         model = takeValue(argv, index) ?? model;
         index += 1;
         break;
+      case '--provider': {
+        const value = takeValue(argv, index);
+        if (value === undefined) {
+          errors.push('--provider needs an id');
+        } else if (findPreset(value) === undefined) {
+          errors.push(
+            `--provider must be one of ${PROVIDER_PRESETS.map((preset) => preset.id).join(', ')} (got ${value})`,
+          );
+        } else {
+          provider = value;
+        }
+        index += 1;
+        break;
+      }
       case '--session-root':
         sessionRoot = resolve(cwd, takeValue(argv, index) ?? sessionRoot);
         index += 1;
@@ -183,9 +222,19 @@ export function parseArgs(
       default:
         if (arg.startsWith('-') && arg.length > 1) {
           errors.push(`unknown option ${arg}`);
-        } else {
-          taskParts.push(arg);
+          break;
         }
+        // The first bare word may name a subcommand; everything after it is an
+        // argument to that subcommand rather than part of the task.
+        if (args.length === 0 && taskParts.length === 0 && (arg === 'model' || arg === 'key')) {
+          kind = arg;
+          break;
+        }
+        if (kind === 'model' || kind === 'key') {
+          args.push(arg);
+          break;
+        }
+        taskParts.push(arg);
     }
   }
 
@@ -196,6 +245,8 @@ export function parseArgs(
     resume,
     workspace,
     model,
+    provider,
+    args,
     mode,
     sessionRoot,
     maxSteps,
@@ -295,17 +346,220 @@ function createLineReader(
   };
 }
 
+/**
+ * Reads a credential without echoing it. On a pipe there is nothing to hide, so
+ * the line is read normally; on a terminal the characters never reach the
+ * screen (backspace and Ctrl-C are honoured).
+ */
+export async function readSecretFromStdin(question: string): Promise<string> {
+  const input = process.stdin;
+  if (input.isTTY !== true) {
+    process.stdout.write(question);
+    input.setEncoding('utf8');
+    const chunks: string[] = [];
+    for await (const chunk of input) {
+      const text = String(chunk);
+      chunks.push(text);
+      if (text.includes('\n')) {
+        break;
+      }
+    }
+    return chunks.join('').trim();
+  }
+
+  process.stdout.write(question);
+  input.setRawMode(true);
+  input.resume();
+  input.setEncoding('utf8');
+  return await new Promise<string>((resolve) => {
+    let value = '';
+    const finish = (result: string): void => {
+      input.off('data', onData);
+      input.setRawMode(false);
+      input.pause();
+      process.stdout.write('\n');
+      resolve(result);
+    };
+    const onData = (chunk: string): void => {
+      for (const char of chunk) {
+        if (char === '\r' || char === '\n') {
+          finish(value);
+          return;
+        }
+        if (char === '\u0003') {
+          finish('');
+          return;
+        }
+        if (char === '\u007f' || char === '\b') {
+          value = value.slice(0, -1);
+          continue;
+        }
+        value += char;
+      }
+    };
+    input.on('data', onData);
+  });
+}
+
+async function chooseModel(
+  preset: (typeof PROVIDER_PRESETS)[number],
+  io: CliIo,
+  shellEnv: Record<string, string | undefined>,
+  storedEnv: Record<string, string | undefined>,
+): Promise<number> {
+  const key = (storedEnv[preset.apiKeyEnv] ?? '').trim();
+  const listing = await fetchModels(preset, key === '' ? undefined : key);
+  if (listing.error !== undefined) {
+    io.out(`(built-in list; live list unavailable: ${listing.error})`);
+  } else {
+    io.out(`${listing.models.length} models offered by this account:`);
+  }
+  const shown = listing.models.slice(0, 40);
+  shown.forEach((name, index) => {
+    io.out(`  ${String(index + 1)}. ${name}`);
+  });
+  if (listing.models.length > shown.length) {
+    io.out(`  … ${String(listing.models.length - shown.length)} more (type a name directly)`);
+  }
+
+  const answer = (
+    await io.prompt(`\nModel number or name (empty = ${preset.defaultModel}): `)
+  ).trim();
+  const asNumber = Number(answer);
+  const chosen =
+    answer === ''
+      ? preset.defaultModel
+      : Number.isInteger(asNumber) && asNumber >= 1 && asNumber <= shown.length
+        ? (shown[asNumber - 1] ?? preset.defaultModel)
+        : answer;
+
+  await saveConfig({ provider: preset.id, model: chosen }, shellEnv);
+  io.out(`saved: ${preset.id} · ${chosen}`);
+  if (key === '') {
+    io.out(`no ${preset.apiKeyEnv} yet — store it with: tiennk key ${preset.id}`);
+    if (preset.docs !== '') {
+      io.out(`create one at ${preset.docs}`);
+    }
+  }
+  return 0;
+}
+
+async function runModelCommand(
+  command: CliCommand,
+  io: CliIo,
+  shellEnv: Record<string, string | undefined>,
+  storedEnv: Record<string, string | undefined>,
+  current: AgentCoreConfig,
+): Promise<number> {
+  const [providerArg, modelArg] = command.args;
+  io.out(`current: ${current.provider} · ${current.model}`);
+
+  if (providerArg === undefined) {
+    io.out('');
+    PROVIDER_PRESETS.forEach((preset, index) => {
+      const has = (storedEnv[preset.apiKeyEnv] ?? '').trim() !== '';
+      io.out(
+        `  ${String(index + 1)}. ${preset.label} (${preset.id}) — ${has ? 'key ✓' : 'no key'}`,
+      );
+    });
+    const answer = (
+      await io.prompt('\nProvider number or id (empty = cancel): ')
+    ).trim();
+    if (answer === '') {
+      io.out('unchanged');
+      return 0;
+    }
+    const asNumber = Number(answer);
+    const preset =
+      Number.isInteger(asNumber) && asNumber >= 1 && asNumber <= PROVIDER_PRESETS.length
+        ? PROVIDER_PRESETS[asNumber - 1]
+        : findPreset(answer);
+    if (preset === undefined) {
+      io.err(`unknown provider ${answer}`);
+      return 2;
+    }
+    return await chooseModel(preset, io, shellEnv, storedEnv);
+  }
+
+  const preset = findPreset(providerArg);
+  if (preset === undefined) {
+    io.err(
+      `unknown provider ${providerArg} (known: ${PROVIDER_PRESETS.map((entry) => entry.id).join(', ')})`,
+    );
+    return 2;
+  }
+  if (modelArg !== undefined && modelArg !== '') {
+    await saveConfig({ provider: preset.id, model: modelArg }, shellEnv);
+    io.out(`saved: ${preset.id} · ${modelArg}`);
+    if ((storedEnv[preset.apiKeyEnv] ?? '').trim() === '') {
+      io.out(`no ${preset.apiKeyEnv} yet — store it with: tiennk key ${preset.id}`);
+    }
+    return 0;
+  }
+  return await chooseModel(preset, io, shellEnv, storedEnv);
+}
+
+async function runKeyCommand(
+  command: CliCommand,
+  io: CliIo,
+  shellEnv: Record<string, string | undefined>,
+  storedEnv: Record<string, string | undefined>,
+): Promise<number> {
+  const [providerArg, valueArg] = command.args;
+
+  if (providerArg === undefined) {
+    io.out('credentials (~/.agent-core/.env, plus anything exported):');
+    for (const preset of PROVIDER_PRESETS) {
+      const fromEnv =
+        (shellEnv[preset.apiKeyEnv] ?? '').trim() !== '' ? 'exported' : undefined;
+      const stored = (storedEnv[preset.apiKeyEnv] ?? '').trim() !== '' ? 'stored' : undefined;
+      const state = fromEnv ?? stored ?? 'missing';
+      io.out(`  ${preset.id.padEnd(12)} ${preset.apiKeyEnv.padEnd(22)} ${state}`);
+    }
+    io.out('\nStore one: tiennk key <provider>');
+    return 0;
+  }
+
+  const preset = findPreset(providerArg);
+  if (preset === undefined) {
+    io.err(
+      `unknown provider ${providerArg} (known: ${PROVIDER_PRESETS.map((entry) => entry.id).join(', ')})`,
+    );
+    return 2;
+  }
+
+  let value = valueArg;
+  if (value === undefined) {
+    if (preset.docs !== '') {
+      io.out(`Create a key at ${preset.docs}`);
+    }
+    value = (await (io.promptSecret ?? readSecretFromStdin)(`${preset.label} API key: `)).trim();
+  }
+  if (value === '') {
+    io.err('no key entered; nothing stored');
+    return 2;
+  }
+
+  const file = await writeEnvValue(preset.apiKeyEnv, value, shellEnv);
+  io.out(`stored ${preset.apiKeyEnv} in ${file}`);
+  io.out(`start the agent with: tiennk --provider ${preset.id}`);
+  return 0;
+}
+
 export async function runCli(options: CliOptions): Promise<number> {
-  const env = options.env ?? process.env;
-  const terminal =
-    options.io?.prompt === undefined
-      ? createInterface({ input: process.stdin, output: process.stdout })
-      : undefined;
-  // On a real terminal let readline draw the prompt; on a pipe or a file, read
-  // queued lines so scripted sessions are not lost to the EOF race.
-  const piped = terminal !== undefined && process.stdin.isTTY !== true
-    ? createLineReader(terminal)
-    : undefined;
+  // readline is created lazily: attaching it claims stdin, which would starve a
+  // piped credential (`printf sk-... | tiennk key deepseek`) or a script.
+  let terminal: ReturnType<typeof createInterface> | undefined;
+  let piped: ((question: string) => Promise<string>) | undefined;
+  const terminalFor = (): ReturnType<typeof createInterface> => {
+    if (terminal === undefined) {
+      terminal = createInterface({ input: process.stdin, output: process.stdout });
+      // On a pipe or a file, read queued lines so scripted sessions are not
+      // lost to the EOF race.
+      piped = process.stdin.isTTY !== true ? createLineReader(terminal) : undefined;
+    }
+    return terminal;
+  };
   const io: CliIo = {
     out: options.io?.out ?? ((line) => process.stdout.write(`${line}\n`)),
     write: options.io?.write ?? ((chunk) => process.stdout.write(chunk)),
@@ -313,14 +567,28 @@ export async function runCli(options: CliOptions): Promise<number> {
     prompt:
       options.io?.prompt ??
       (async (question) => {
+        const active = terminalFor();
         if (piped !== undefined) {
           return await piped(question);
         }
-        return await (terminal?.question(question) ?? '');
+        return await active.question(question);
       }),
+    ...(options.io?.promptSecret === undefined
+      ? {}
+      : { promptSecret: options.io.promptSecret }),
   };
-
-  const command = parseArgs(options.argv, env, options.cwd ?? process.cwd());
+  // A stored credential is enough to start: no shell export required.
+  const shellEnv = options.env ?? process.env;
+  const storedEnv = await resolveEnv(shellEnv);
+  const loaded = await loadConfig(shellEnv);
+  const command = parseArgs(options.argv, shellEnv, options.cwd ?? process.cwd());
+  const config: AgentCoreConfig = {
+    provider: command.provider ?? loaded?.provider ?? 'deepseek',
+    model: command.model !== '' ? command.model : (loaded?.model ?? 'deepseek-flash'),
+    ...(loaded?.baseUrl === undefined ? {} : { baseUrl: loaded.baseUrl }),
+    ...(loaded?.kind === undefined ? {} : { kind: loaded.kind }),
+    ...(loaded?.apiKeyEnv === undefined ? {} : { apiKeyEnv: loaded.apiKeyEnv }),
+  };
 
   if (command.kind === 'help') {
     io.out(HELP);
@@ -334,6 +602,12 @@ export async function runCli(options: CliOptions): Promise<number> {
     const ids = await listSessionIds(command.sessionRoot);
     io.out(ids.length === 0 ? `No sessions in ${command.sessionRoot}` : ids.join('\n'));
     return 0;
+  }
+  if (command.kind === 'model') {
+    return await runModelCommand(command, io, shellEnv, storedEnv, config);
+  }
+  if (command.kind === 'key') {
+    return await runKeyCommand(command, io, shellEnv, storedEnv);
   }
   if (command.errors.length > 0) {
     for (const error of command.errors) {
@@ -350,13 +624,18 @@ export async function runCli(options: CliOptions): Promise<number> {
   const provider =
     options.provider ??
     (() => {
-      if ((env.DEEPSEEK_API_KEY ?? '').trim() === '') {
+      const envName = apiKeyEnvFor(config);
+      if ((storedEnv[envName] ?? '').trim() === '') {
         return undefined;
       }
-      return createDeepSeekProvider({ env });
+      return createProviderFor(config, storedEnv);
     })();
   if (provider === undefined) {
-    io.err('error: set DEEPSEEK_API_KEY, or run with a provider injected');
+    const envName = apiKeyEnvFor(config);
+    io.err(`error: no ${envName} found for provider "${config.provider}".`);
+    io.err(`  Store it once:   tiennk key ${config.provider}`);
+    io.err(`  Or this run:     export ${envName}=...`);
+    io.err('  Pick a provider: tiennk model');
     return 2;
   }
 
@@ -380,7 +659,7 @@ export async function runCli(options: CliOptions): Promise<number> {
     sessionRoot: command.sessionRoot,
     sessionId: command.resume ?? command.session ?? defaultSessionId(Date.now()),
     provider,
-    model: command.model,
+    model: config.model,
     mode: command.mode,
     contextWindow: command.contextWindow,
     maxSteps: command.maxSteps,
@@ -453,7 +732,7 @@ export async function runCli(options: CliOptions): Promise<number> {
   }
 
   io.out(
-    `agent-core · session ${runtime.sessionId} · model ${runtime.model} · mode ${command.mode}` +
+    `agent-core · session ${runtime.sessionId} · ${config.provider}/${runtime.model} · mode ${command.mode}` +
       (runtime.confinement === 'unconfined' ? ' · shell unconfined' : ' · shell os-sandboxed'),
   );
   io.out('Type a task, or /help for commands.');

@@ -28,7 +28,16 @@ export { FakeProvider, textScript } from './llm/fake.js';
 export type { FakeScript } from './llm/fake.js';
 
 export { DeepSeekProvider, createDeepSeekProvider } from './llm/deepseek.js';
-export type { DeepSeekProviderOptions, FetchLike } from './llm/deepseek.js';
+export type { DeepSeekProviderOptions } from './llm/deepseek.js';
+
+export {
+  OpenAiCompatibleProvider,
+  createOpenAiCompatibleProvider,
+} from './llm/openai-compatible.js';
+export type { OpenAiCompatibleOptions, FetchLike } from './llm/openai-compatible.js';
+
+export { AnthropicProvider, createAnthropicProvider } from './llm/anthropic.js';
+export type { AnthropicProviderOptions } from './llm/anthropic.js';
 
 export { parseSseStream } from './llm/sse.js';
 export type { SseEvent } from './llm/sse.js';
@@ -312,3 +321,26 @@ export type {
   PolicyOutcome,
   SandboxMode,
 } from './policy/gate.js';
+
+export {
+  PROVIDER_PRESETS,
+  configPaths,
+  fetchModels,
+  findPreset,
+  loadConfig,
+  presetFor,
+  readEnvFile,
+  resolveEnv,
+  saveConfig,
+  writeEnvValue,
+} from './config/store.js';
+export type {
+  AgentCoreConfig,
+  ConfigPaths,
+  ModelListResult,
+  ProviderKind,
+  ProviderPreset,
+} from './config/store.js';
+
+export { apiKeyEnvFor, createProviderFor } from './llm/factory.js';
+export type { ProviderOverrides } from './llm/factory.js';

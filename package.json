@@ -10,7 +10,8 @@
   },
   "packageManager": "pnpm@12.3.4",
   "bin": {
-    "agent-core": "bin/agent-core.mjs"
+    "agent-core": "bin/agent-core.mjs",
+    "tiennk": "bin/agent-core.mjs"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

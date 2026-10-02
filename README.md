@@ -1,7 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M0–M8 xong** — chạy được như một CLI thật, cài được thành lệnh toàn cục.
+Trạng thái: **M0–M9 xong** — CLI thật, cài thành lệnh toàn cục `tiennk`, chọn được provider
+(DeepSeek · Claude · GPT · Gemini · OpenRouter · Ollama).
 
 ## Lệnh
 
@@ -28,6 +29,41 @@ agent-core --version       # -> agent-core 0.1.0
 `npm uninstall -g agent-core`.
 
 ## Chạy nó
+
+```bash
+tiennk                    # REPL trong thư mục hiện tại (workspace = cwd)
+tiennk "đọc repo này và tóm tắt kiến trúc"
+tiennk --list             # các session đã lưu
+tiennk --resume <id> "làm tiếp việc đang dở"
+```
+
+Sau khi cài toàn cục, **không cần `export` gì cả**: credential đọc từ `~/.agent-core/.env`.
+`agent-core` là tên cũ, vẫn dùng được y hệt `tiennk`.
+
+## Chọn provider và model
+
+```bash
+tiennk key                 # xem provider nào đã có key (không in giá trị)
+tiennk key anthropic       # nhập key (ẩn ký tự), lưu vào ~/.agent-core/.env (chmod 600)
+tiennk key openai sk-...   # hoặc truyền thẳng
+
+tiennk model               # menu: chọn provider → chọn model (danh sách THẬT từ provider)
+tiennk model anthropic claude-sonnet-4-5   # đặt thẳng, không qua menu
+tiennk --provider google "xin chào"        # dùng một lần, không đổi mặc định
+```
+
+| Provider | id | Biến môi trường | Kiểu API |
+|---|---|---|---|
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | OpenAI-compatible |
+| Anthropic (Claude) | `anthropic` | `ANTHROPIC_API_KEY` | Messages API riêng |
+| OpenAI (GPT) | `openai` | `OPENAI_API_KEY` | OpenAI-compatible |
+| Google (Gemini) | `google` | `GOOGLE_API_KEY` | OpenAI-compatible |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | OpenAI-compatible |
+| Ollama (local) | `ollama` | `OLLAMA_API_KEY` | OpenAI-compatible |
+
+Provider chưa có trong bảng vẫn dùng được nếu nó nói OpenAI-compatible: đặt `baseUrl` + `kind`
+trong `~/.agent-core/config.json`. Shell export luôn thắng file, nên `export OPENAI_API_KEY=...`
+vẫn override cho một lần chạy.
 
 ```bash
 pnpm agent --help                                  # qua tsx, không cần build
@@ -89,6 +125,10 @@ bị **từ chối** (thêm `--escalate` để hỏi, `--yes` để tự đồng
 | `src/tools/mcp.ts` | biến tool của MCP thành `ToolDef` tên `mcp__<server>__<tool>`, quảng cáo schema của server | M7 |
 | `src/context/cost.ts` | bảng giá theo model + `estimateCost` + báo cáo token/chi phí cuối phiên | M8 |
 | `src/app/runtime.ts` | composition root: ghép sandbox + log + tool + skills + subagent + context + loop, ghi mọi event của loop vào log | M8 |
+| `src/config/store.ts` | preset provider + `~/.agent-core/config.json` + `~/.agent-core/.env` + đọc danh sách model thật | M9 |
+| `src/llm/openai-compatible.ts` | một implementation cho mọi API kiểu OpenAI (DeepSeek/GPT/Gemini/OpenRouter/Ollama) | M9 |
+| `src/llm/anthropic.ts` | provider Claude: Messages API, `tool_use`/`tool_result`, usage tách cache read/write | M9 |
+| `src/llm/factory.ts` | `createProviderFor`: config → provider, CLI không cần rẽ nhánh theo tên | M9 |
 | `src/cli/main.ts` | `parseArgs` + `runCli`: một lệnh hoặc REPL, stream câu trả lời, dòng tool, hỏi duyệt, slash command, exit code | M8 |
 | `bin/agent-core.mjs` | entry point toàn cục: nạp `dist/cli/main.js`, tự đặt exit code | M8 |
 | `tsconfig.build.json` | cấu hình build riêng: `rootDir src` → `outDir dist`, có declaration + sourcemap, **không** biên dịch `tests/` | M8 |
