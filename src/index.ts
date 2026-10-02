@@ -284,7 +284,7 @@ export type {
   SkillScope,
   SkillSource,
 } from './skills/loader.js';
-export { createSkillTool } from './tools/skill.js';
+export { createSkillSearchTool, createSkillTool } from './tools/skill.js';
 export type { SkillToolConfig } from './tools/skill.js';
 
 export { MCP_PROTOCOL_VERSION, McpError, createMcpStdioClient } from './mcp/client.js';

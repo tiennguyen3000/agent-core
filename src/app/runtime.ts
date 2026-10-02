@@ -18,6 +18,7 @@ import { createContextManager } from '../context/manager.js';
 import type { CompactOutcome, ContextManager } from '../context/manager.js';
 import { createProcessJobRegistry } from '../jobs/registry.js';
 import type { JobRegistry } from '../jobs/types.js';
+import { homedir } from 'node:os';
 import type { LLMDelta, LLMProvider, Usage } from '../llm/types.js';
 import type { ApprovalAnswerer } from '../policy/approval.js';
 import type { SandboxMode } from '../policy/gate.js';
@@ -41,7 +42,7 @@ import { ReadTracker } from '../tools/observation.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { ToolCtx } from '../tools/registry.js';
 import { createGlobTool, createGrepTool } from '../tools/search.js';
-import { createSkillTool } from '../tools/skill.js';
+import { createSkillSearchTool, createSkillTool } from '../tools/skill.js';
 import { createSubagentTool } from '../tools/subagent.js';
 
 export interface AgentRuntimeOptions {
@@ -182,6 +183,29 @@ export function mapLoopEvent(
   }
 }
 
+/**
+ * Project directories first (a project shadows the user), then shared user
+ * directories: `.agents/skills` is the portable convention, `~/.agent-core/skills`
+ * is where `tiennk skills import` puts copies, and `extra` holds directories the
+ * user registered to inherit from another agent.
+ */
+export function defaultSkillSources(
+  workspaceRoot: string,
+  extra: readonly string[] = [],
+  importsRoot?: string,
+): readonly SkillSource[] {
+  const home = homedir();
+  return [
+    { root: `${workspaceRoot}/.agents/skills`, scope: 'project' },
+    { root: `${workspaceRoot}/.claude/skills`, scope: 'project' },
+    { root: `${home}/.agents/skills`, scope: 'user' },
+    // Where `tiennk skills import` puts copies. It follows AGENT_CORE_HOME, so
+    // the reader and the writer agree even when the home is relocated.
+    { root: importsRoot ?? `${home}/.agent-core/skills`, scope: 'user' },
+    ...extra.map((root) => ({ root, scope: 'user' as const })),
+  ];
+}
+
 export async function createAgentRuntime(options: AgentRuntimeOptions): Promise<AgentRuntime> {
   const now = options.now ?? (() => Date.now());
   const log = await openSessionLog({
@@ -231,13 +255,11 @@ export async function createAgentRuntime(options: AgentRuntimeOptions): Promise<
 
   const skills = createSkillLoader({
     fs: sandbox.fs,
-    sources: options.skillSources ?? [
-      { root: `${options.workspaceRoot}/.agents/skills`, scope: 'project' },
-      { root: `${options.workspaceRoot}/.claude/skills`, scope: 'project' },
-    ],
+    sources: options.skillSources ?? defaultSkillSources(options.workspaceRoot),
   });
   await skills.refresh();
   registry.register(createSkillTool({ loader: skills }));
+  registry.register(createSkillSearchTool({ loader: skills }));
 
   const baseSystem = options.systemPrompt ?? DEFAULT_SYSTEM;
   registry.register(

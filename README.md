@@ -1,8 +1,8 @@
 # agent-core
 
 Agent core cá nhân: event-sourced, tool-driven, policy-gated.
-Trạng thái: **M0–M9 xong** — CLI thật, cài thành lệnh toàn cục `tiennk`, chọn được provider
-(DeepSeek · Claude · GPT · Gemini · OpenRouter · Ollama).
+Trạng thái: **M0–M10 xong** — CLI thật (`tiennk`), chọn được provider (DeepSeek · Claude · GPT ·
+Gemini · OpenRouter · Ollama) và **kế thừa skill** từ agent khác (Hermes, Claude Code, Codex…).
 
 ## Lệnh
 
@@ -39,6 +39,28 @@ tiennk --resume <id> "làm tiếp việc đang dở"
 
 Sau khi cài toàn cục, **không cần `export` gì cả**: credential đọc từ `~/.agent-core/.env`.
 `agent-core` là tên cũ, vẫn dùng được y hệt `tiennk`.
+
+## Kế thừa skill từ agent khác (Hermes, Claude Code, Codex…)
+
+Skill mà agent khác đã cài **không cần copy** — trỏ thẳng vào thư mục của nó là dùng được, và khi
+agent kia cập nhật skill thì agent-core thấy ngay:
+
+```bash
+tiennk skills detect               # tìm skill của các agent đã cài trên máy
+tiennk skills add ~/.hermes/skills # kế thừa (không copy, không nhân bản)
+tiennk skills                      # xem nguồn nào đang dùng, bao nhiêu skill
+tiennk skills search reminders     # tìm theo từ khoá
+tiennk skills remove ~/.hermes/skills
+tiennk skills import ~/.hermes/skills   # hoặc COPY vào ~/.agent-core/skills (bản chụp)
+```
+
+Thứ tự ưu tiên: skill của **project** (`<workspace>/.agents/skills`, `<workspace>/.claude/skills`)
+đè lên skill **user**; trong cùng một bậc thì nguồn đứng trước thắng. Mặc định agent-core đã đọc
+sẵn `~/.agents/skills` và `~/.agent-core/skills` (nơi `import` ghi vào).
+
+Với catalog lớn (ví dụ 146 skill Hermes), agent **không** nhận hết tên trong system prompt: nó nhận
+bản nhóm theo category kèm số lượng, rồi tự gọi tool `skill_search` để tìm, và `skill` để nạp toàn
+văn đúng một skill khi cần.
 
 ## Chọn provider và model
 
@@ -129,6 +151,8 @@ bị **từ chối** (thêm `--escalate` để hỏi, `--yes` để tự đồng
 | `src/llm/openai-compatible.ts` | một implementation cho mọi API kiểu OpenAI (DeepSeek/GPT/Gemini/OpenRouter/Ollama) | M9 |
 | `src/llm/anthropic.ts` | provider Claude: Messages API, `tool_use`/`tool_result`, usage tách cache read/write | M9 |
 | `src/llm/factory.ts` | `createProviderFor`: config → provider, CLI không cần rẽ nhánh theo tên | M9 |
+| `src/skills/loader.ts` | quét nhiều nguồn (project → user → thư mục agent khác), nhóm theo category khi catalog lớn, `search`, `sourceSummaries` | M10 |
+| `src/tools/skill.ts` | tool `skill` (nạp toàn văn) + `skill_search` (tìm khi catalog bị nhóm) | M10 |
 | `src/cli/main.ts` | `parseArgs` + `runCli`: một lệnh hoặc REPL, stream câu trả lời, dòng tool, hỏi duyệt, slash command, exit code | M8 |
 | `bin/agent-core.mjs` | entry point toàn cục: nạp `dist/cli/main.js`, tự đặt exit code | M8 |
 | `tsconfig.build.json` | cấu hình build riêng: `rootDir src` → `outDir dist`, có declaration + sourcemap, **không** biên dịch `tests/` | M8 |

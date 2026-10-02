@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FakeProvider, parseArgs, runCli } from '../src/index.js';
 import { makeTmpDir, removeTmpDir } from './helpers/tmp-dir.js';
@@ -561,5 +561,173 @@ describe('provider and credential commands', () => {
 
     expect(code).toBe(2);
     expect(io.err.join('\n')).toContain('unknown provider nope');
+  });
+});
+
+describe('skills inheritance commands', () => {
+  async function withSkillDir(): Promise<{ home: string; dir: string }> {
+    const home = await tmp();
+    const dir = await tmp();
+    await mkdir(join(dir, 'apple-reminders'), { recursive: true });
+    await writeFile(
+      join(dir, 'apple-reminders', 'SKILL.md'),
+      [
+        '---',
+        'name: apple-reminders',
+        'description: Apple Reminders via remindctl.',
+        'version: 1.0.0',
+        'platforms: [macos]',
+        '---',
+        '',
+        '# Reminders',
+        'Use remindctl to list reminders.',
+      ].join('\n'),
+    );
+    await writeFile(join(dir, 'plain.md'), '# Plain skill\n\nA flat skill file.');
+    return { home, dir };
+  }
+
+  it('inherits another agent\'s skill directory through config', async () => {
+    const { home, dir } = await withSkillDir();
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['skills', 'add', dir],
+      io: io.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('now inheriting 2 skills');
+    expect(JSON.parse(await readFile(join(home, 'config.json'), 'utf8'))).toMatchObject({
+      skillSources: [dir],
+    });
+
+    const listed = harness();
+    await runCli({
+      argv: ['skills'],
+      io: listed.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+    // The machine may already have skills in ~/.agents/skills, so assert on the
+    // source line for the directory this test added.
+    const sourceLine = listed
+      .all()
+      .split('\n')
+      .find((line) => line.includes(dir));
+    expect(sourceLine).toContain('2 skills');
+    expect(sourceLine).toContain('[added]');
+  });
+
+  it('refuses a directory with no skills instead of storing junk', async () => {
+    const home = await tmp();
+    const empty = await tmp();
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['skills', 'add', empty],
+      io: io.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    expect(code).toBe(2);
+    expect(io.err.join('\n')).toContain('no skills found');
+    await expect(readFile(join(home, 'config.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('removes an inherited directory again', async () => {
+    const { home, dir } = await withSkillDir();
+    await runCli({ argv: ['skills', 'add', dir], io: harness().io, env: { AGENT_CORE_HOME: home } });
+
+    const io = harness();
+    const code = await runCli({
+      argv: ['skills', 'remove', dir],
+      io: io.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('stopped inheriting');
+    expect(JSON.parse(await readFile(join(home, 'config.json'), 'utf8'))).not.toHaveProperty(
+      'skillSources',
+    );
+  });
+
+  it('imports copies into the agent-core skill directory', async () => {
+    const { home, dir } = await withSkillDir();
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['skills', 'import', dir],
+      io: io.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('copied 2 skills');
+    const bundle = await readFile(join(home, 'skills', 'apple-reminders', 'SKILL.md'), 'utf8');
+    expect(bundle).toContain('remindctl');
+    const flat = await readFile(join(home, 'skills', 'plain.md'), 'utf8');
+    expect(flat).toContain('A flat skill file.');
+
+    // A second import is a no-op unless --force.
+    const again = harness();
+    await runCli({ argv: ['skills', 'import', dir], io: again.io, env: { AGENT_CORE_HOME: home } });
+    expect(again.all()).toContain('copied 0 skills');
+    expect(again.all()).toContain('skipped 2');
+
+    const forced = harness();
+    await runCli({
+      argv: ['skills', 'import', dir, '--force'],
+      io: forced.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+    expect(forced.all()).toContain('copied 2 skills');
+  });
+
+  it('searches inherited skills by keyword', async () => {
+    const { home, dir } = await withSkillDir();
+    await runCli({ argv: ['skills', 'add', dir], io: harness().io, env: { AGENT_CORE_HOME: home } });
+
+    const io = harness();
+    const code = await runCli({
+      argv: ['skills', 'search', 'remindctl'],
+      io: io.io,
+      env: { AGENT_CORE_HOME: home },
+    });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('apple-reminders [apple-reminders]');
+    expect(io.all()).toContain('Apple Reminders via remindctl.');
+  });
+
+  it('detects skill directories other agents installed', async () => {
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['skills', 'detect'],
+      io: io.io,
+      env: { AGENT_CORE_HOME: await tmp() },
+      cwd: await tmp(),
+    });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('looking for skills installed by other agents');
+    // Machine dependent: either something was found, or it says so plainly.
+    expect(/skills\s+\/|none found/.test(io.all())).toBe(true);
+  });
+
+  it('rejects an unknown skills subcommand with usage', async () => {
+    const io = harness();
+
+    const code = await runCli({
+      argv: ['skills', 'frobnicate'],
+      io: io.io,
+      env: { AGENT_CORE_HOME: await tmp() },
+    });
+
+    expect(code).toBe(2);
+    expect(io.err.join('\n')).toContain('unknown skills command');
+    expect(io.err.join('\n')).toContain('tiennk skills list');
   });
 });

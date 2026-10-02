@@ -3,6 +3,7 @@ import {
   ToolErrorCode,
   ToolRegistry,
   createSkillLoader,
+  createSkillSearchTool,
   createSkillTool,
   parseSkillMarkdown,
 } from '../src/index.js';
@@ -102,8 +103,24 @@ describe('skill discovery', () => {
 
     const section = subject.promptSection();
 
-    expect(section).toContain('more skills not shown');
-    expect(section.length).toBeLessThan(600);
+    // Too many for the budget: it degrades to a grouped summary plus a pointer
+    // to the search tool instead of dropping skills silently.
+    expect(section).toContain('40 skills in 1 category');
+    expect(section).toContain('skill_search');
+    expect(section.length).toBeLessThan(800);
+  });
+
+  it('lists every skill in full when the budget allows', async () => {
+    const { subject } = await loader({
+      '.agents/skills/office/SKILL.md': officeSkill,
+      '.agents/skills/release.md': plainSkill,
+    });
+
+    const section = subject.promptSection();
+
+    expect(section).toContain('- office-docx: Create and edit Word documents.');
+    expect(section).toContain('- release: Release notes');
+    expect(section).not.toContain('skill_search for keywords');
   });
 
   it('ignores vendored and hidden-ignore directories', async () => {
@@ -223,5 +240,122 @@ describe('skill tool', () => {
 
     expect(result.code).toBe(ToolErrorCode.NotFound);
     expect(result.output).toContain('Available');
+  });
+});
+
+  it('ignores category documents that sit next to skill directories', async () => {
+    const { subject } = await loader({
+      '.agents/skills/apple/DESCRIPTION.md': '# Apple skills\n\nCategory overview.',
+      '.agents/skills/apple/README.md': '# Read me',
+      '.agents/skills/apple/apple-reminders/SKILL.md': officeSkill,
+      '.agents/skills/real.md': plainSkill,
+    });
+
+    // The flat file has no frontmatter, so it takes its file name.
+    expect(subject.catalog().map((entry) => entry.name)).toEqual(['office-docx', 'real']);
+  });
+
+describe('large catalogs and inheritance', () => {
+  it('finds skills nested several levels deep, as other agents lay them out', async () => {
+    const { subject } = await loader({
+      '.agents/skills/apple/apple-reminders/SKILL.md': officeSkill,
+      '.agents/skills/research/deep/nested/SKILL.md': plainSkill,
+    });
+
+    // The flat file has no frontmatter, so it takes its directory name; the
+    // point is that a SKILL.md four levels down was reached at all.
+    expect(subject.catalog().map((entry) => entry.name)).toEqual(['office-docx', 'nested']);
+    expect(subject.catalog().map((entry) => entry.category)).toEqual(['apple', 'research']);
+  });
+
+  it('reports which source contributed how many skills', async () => {
+    const fs = fsWith({
+      'project/one/SKILL.md': officeSkill,
+      'user/two.md': plainSkill,
+    });
+    const subject = createSkillLoader({
+      fs,
+      sources: [
+        { root: '/ws/project', scope: 'project' },
+        { root: '/ws/user', scope: 'user' },
+        { root: '/ws/absent', scope: 'user' },
+      ],
+    });
+
+    await subject.refresh();
+    const summaries = subject.sourceSummaries();
+
+    expect(summaries).toEqual([
+      { root: '/ws/project', scope: 'project', count: 1, missing: false },
+      { root: '/ws/user', scope: 'user', count: 1, missing: false },
+      { root: '/ws/absent', scope: 'user', count: 0, missing: true },
+    ]);
+  });
+
+  it('counts a shadowed skill against the source that wins', async () => {
+    const fs = fsWith({
+      'project/dup/SKILL.md': officeSkill,
+      'user/dup/SKILL.md': officeSkill,
+    });
+    const subject = createSkillLoader({
+      fs,
+      sources: [
+        { root: '/ws/project', scope: 'project' },
+        { root: '/ws/user', scope: 'user' },
+      ],
+    });
+
+    await subject.refresh();
+
+    expect(subject.sourceSummaries().map((summary) => summary.count)).toEqual([1, 0]);
+  });
+
+  it('searches names, descriptions and categories, preferring name hits', async () => {
+    const { subject } = await loader({
+      '.agents/skills/apple/apple-reminders/SKILL.md': officeSkill,
+      '.agents/skills/release.md': plainSkill,
+    });
+
+    expect(subject.search('word').map((entry) => entry.name)).toEqual(['office-docx']);
+    expect(subject.search('release').map((entry) => entry.name)).toEqual(['release']);
+    expect(subject.search('apple').map((entry) => entry.name)).toEqual(['office-docx']);
+    expect(subject.search('nothing-here')).toEqual([]);
+    expect(subject.search('   ').length).toBe(2);
+  });
+
+  it('honours the search limit', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10; index += 1) {
+      files[`.agents/skills/s${String(index)}.md`] =
+        `---\nname: skill-${String(index)}\ndescription: Shared keyword number ${String(index)}.\n---\nbody`;
+    }
+    const { subject } = await loader(files);
+
+    expect(subject.search('keyword', 3)).toHaveLength(3);
+  });
+});
+
+describe('skill_search tool', () => {
+  it('explains how many skills exist when nothing matches', async () => {
+    const { subject } = await loader({ '.agents/skills/office/SKILL.md': officeSkill });
+    const registry = new ToolRegistry();
+    registry.register(createSkillSearchTool({ loader: subject }));
+
+    const result = await registry.dispatch('skill_search', { query: 'zzz' }, makeCtx());
+
+    expect(result.code).toBe(ToolErrorCode.NotFound);
+    expect(result.output).toContain('1 skills in total');
+  });
+
+  it('lists matches with their category', async () => {
+    const { subject } = await loader({ '.agents/skills/apple/reminders/SKILL.md': officeSkill });
+    const registry = new ToolRegistry();
+    registry.register(createSkillSearchTool({ loader: subject }));
+
+    const result = await registry.dispatch('skill_search', { query: 'word' }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toContain('- office-docx [apple]: Create and edit Word documents.');
+    expect(result.meta?.matches).toBe(1);
   });
 });

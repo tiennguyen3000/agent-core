@@ -8,13 +8,16 @@
  */
 
 import { createInterface } from 'node:readline/promises';
-import { stat, writeFile } from 'node:fs/promises';
+import { cp, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createAgentRuntime } from '../app/runtime.js';
+import { createAgentRuntime, defaultSkillSources } from '../app/runtime.js';
+import { createLocalFs } from '../fs/local.js';
+import { createSkillLoader } from '../skills/loader.js';
 import {
   PROVIDER_PRESETS,
+  configPaths,
   fetchModels,
   findPreset,
   loadConfig,
@@ -48,7 +51,7 @@ export interface CliOptions {
 }
 
 export interface CliCommand {
-  readonly kind: 'help' | 'version' | 'list' | 'run' | 'model' | 'key';
+  readonly kind: 'help' | 'version' | 'list' | 'run' | 'model' | 'key' | 'skills';
   readonly task: string;
   readonly session: string | undefined;
   readonly resume: string | undefined;
@@ -77,6 +80,12 @@ Usage
   agent-core model <provider> <model>    Set them without a menu
   agent-core key <provider>              Store an API key (~/.agent-core/.env)
   agent-core key                         Show which providers have a key
+  agent-core skills                      List skill sources and what they hold
+  agent-core skills detect               Find skills installed by other agents
+  agent-core skills add <dir>            Inherit a skill directory (live, no copy)
+  agent-core skills remove <dir>         Stop inheriting it
+  agent-core skills import <dir>         Copy a skill directory into ~/.agent-core/skills
+  agent-core skills search <words>       Search names and descriptions
 
 Options
   --workspace <dir>      Workspace root (default: current directory)
@@ -96,7 +105,7 @@ Options
   --help, -h             Print this help
 
 Inside the REPL
-  /help /quit /cost /compact /model <name> /resume <id> /fork [id] /export
+  /help /quit /cost /compact /model <name> /resume <id> /fork [id] /export /skills
 `;
 
 function takeValue(argv: readonly string[], index: number): string | undefined {
@@ -220,18 +229,24 @@ export function parseArgs(
         yes = true;
         break;
       default:
+        // A subcommand owns the rest of its argv, including flags such as
+        // `--force`; every global flag above is matched before this point.
+        if (kind === 'model' || kind === 'key' || kind === 'skills') {
+          args.push(arg);
+          break;
+        }
         if (arg.startsWith('-') && arg.length > 1) {
           errors.push(`unknown option ${arg}`);
           break;
         }
         // The first bare word may name a subcommand; everything after it is an
         // argument to that subcommand rather than part of the task.
-        if (args.length === 0 && taskParts.length === 0 && (arg === 'model' || arg === 'key')) {
+        if (
+          args.length === 0 &&
+          taskParts.length === 0 &&
+          (arg === 'model' || arg === 'key' || arg === 'skills')
+        ) {
           kind = arg;
-          break;
-        }
-        if (kind === 'model' || kind === 'key') {
-          args.push(arg);
           break;
         }
         taskParts.push(arg);
@@ -444,6 +459,207 @@ async function chooseModel(
   return 0;
 }
 
+/** Directories other agents on this machine are known to keep skills in. */
+function knownSkillLocations(
+  workspaceRoot: string,
+  configDir: string,
+): readonly { readonly label: string; readonly root: string }[] {
+  const home = homedir();
+  return [
+    { label: 'Hermes (your skills)', root: join(home, '.hermes', 'skills') },
+    { label: 'Hermes (bundled)', root: join(home, '.hermes', 'hermes-agent', 'skills') },
+    {
+      label: 'Hermes (optional packs)',
+      root: join(home, '.hermes', 'hermes-agent', 'optional-skills'),
+    },
+    { label: 'Shared agents dir', root: join(home, '.agents', 'skills') },
+    { label: 'Claude Code', root: join(home, '.claude', 'skills') },
+    { label: 'Codex', root: join(home, '.codex', 'skills') },
+    { label: 'Cursor', root: join(home, '.cursor', 'skills') },
+    { label: 'agent-core imports', root: join(configDir, 'skills') },
+    { label: 'This project (.agents)', root: join(workspaceRoot, '.agents', 'skills') },
+    { label: 'This project (.claude)', root: join(workspaceRoot, '.claude', 'skills') },
+  ];
+}
+
+async function runSkillsCommand(
+  command: CliCommand,
+  io: CliIo,
+  shellEnv: Record<string, string | undefined>,
+  config: AgentCoreConfig,
+): Promise<number> {
+  const [action = 'list', ...rest] = command.args;
+  const configDir = configPaths(shellEnv).dir;
+  const configured = config.skillSources ?? [];
+  const sources = defaultSkillSources(command.workspace, configured, join(configDir, 'skills'));
+  const roots = sources.map((source) => source.root);
+  const loader = createSkillLoader({ fs: createLocalFs(), sources });
+
+  const scanOne = async (root: string): Promise<number> => {
+    const single = createSkillLoader({
+      fs: createLocalFs(),
+      sources: [{ root, scope: 'user' }],
+    });
+    await single.refresh();
+    return single.catalog().length;
+  };
+
+  if (action === 'list' || command.args.length === 0) {
+    await loader.refresh();
+    io.out(`skill sources (project first, it shadows user):`);
+    for (const summary of loader.sourceSummaries()) {
+      const mark = summary.missing ? 'missing' : `${String(summary.count)} skills`;
+      const tag = configured.includes(summary.root) ? ' [added]' : '';
+      io.out(`  ${summary.scope.padEnd(7)} ${mark.padEnd(12)} ${summary.root}${tag}`);
+    }
+    const catalog = loader.catalog();
+    io.out(`\n${String(catalog.length)} skills available to the agent.`);
+    if (catalog.length > 0) {
+      io.out(`Load one with the \`skill\` tool; find one with: tiennk skills search <words>`);
+    }
+    if (configured.length === 0) {
+      io.out('\nOther agents on this machine may have skills: tiennk skills detect');
+    }
+    return 0;
+  }
+
+  if (action === 'search') {
+    await loader.refresh();
+    const query = rest.join(' ').trim();
+    if (query === '') {
+      io.err('usage: tiennk skills search <words>');
+      return 2;
+    }
+    const matches = loader.search(query, 30);
+    if (matches.length === 0) {
+      io.out(`no skill matches ${JSON.stringify(query)} (${String(loader.catalog().length)} in total)`);
+      return 0;
+    }
+    for (const entry of matches) {
+      io.out(`  ${entry.name} [${entry.category}] — ${entry.description}`);
+    }
+    return 0;
+  }
+
+  if (action === 'detect') {
+    io.out('looking for skills installed by other agents...');
+    let found = 0;
+    for (const candidate of knownSkillLocations(command.workspace, configDir)) {
+      let exists = false;
+      try {
+        exists = (await stat(candidate.root)).isDirectory();
+      } catch {
+        exists = false;
+      }
+      if (!exists) {
+        continue;
+      }
+      const count = await scanOne(candidate.root);
+      if (count === 0) {
+        continue;
+      }
+      found += 1;
+      const already = roots.includes(candidate.root) ? ' (already inherited)' : '';
+      io.out(`  ${String(count).padStart(4)} skills  ${candidate.root}  ${candidate.label}${already}`);
+      if (!roots.includes(candidate.root)) {
+        io.out(`        inherit it:  tiennk skills add ${candidate.root}`);
+      }
+    }
+    if (found === 0) {
+      io.out('  none found.');
+    }
+    return 0;
+  }
+
+  if (action === 'add') {
+    const target = rest[0] === undefined ? undefined : resolve(command.workspace, rest[0]);
+    if (target === undefined) {
+      io.err('usage: tiennk skills add <dir>');
+      return 2;
+    }
+    const count = await scanOne(target);
+    if (count === 0) {
+      io.err(`no skills found in ${target}; nothing added`);
+      io.err('a skill is a directory with SKILL.md, or a <name>.md file');
+      return 2;
+    }
+    if (configured.includes(target)) {
+      io.out(`already inheriting ${target} (${String(count)} skills)`);
+      return 0;
+    }
+    await saveConfig({ ...config, skillSources: [...configured, target] }, shellEnv);
+    io.out(`now inheriting ${String(count)} skills from ${target}`);
+    io.out('the agent sees them on its next start');
+    return 0;
+  }
+
+  if (action === 'remove') {
+    const target = rest[0] === undefined ? undefined : resolve(command.workspace, rest[0]);
+    if (target === undefined) {
+      io.err('usage: tiennk skills remove <dir>');
+      return 2;
+    }
+    if (!configured.includes(target)) {
+      io.out(`${target} is not in the inherited list`);
+      return 0;
+    }
+    const remaining = configured.filter((root) => root !== target);
+    const withoutSkillSources: AgentCoreConfig = { ...config };
+    delete (withoutSkillSources as { skillSources?: readonly string[] }).skillSources;
+    await saveConfig(
+      remaining.length === 0 ? withoutSkillSources : { ...config, skillSources: remaining },
+      shellEnv,
+    );
+    io.out(`stopped inheriting ${target}`);
+    return 0;
+  }
+
+  if (action === 'import') {
+    const from = rest[0] === undefined ? undefined : resolve(command.workspace, rest[0]);
+    const force = rest.includes('--force');
+    if (from === undefined) {
+      io.err('usage: tiennk skills import <dir> [--force]');
+      return 2;
+    }
+    const source = createSkillLoader({
+      fs: createLocalFs(),
+      sources: [{ root: from, scope: 'user' }],
+    });
+    await source.refresh();
+    const catalog = source.catalog();
+    if (catalog.length === 0) {
+      io.err(`no skills found in ${from}`);
+      return 2;
+    }
+    const target = join(configDir, 'skills');
+    const copied: string[] = [];
+    const skipped: string[] = [];
+    for (const entry of catalog) {
+      const destination = entry.bundle ? join(target, entry.name) : join(target, `${entry.name}.md`);
+      if (!force && (await pathExists(destination))) {
+        skipped.push(entry.name);
+        continue;
+      }
+      await cp(entry.bundle ? dirname(entry.path) : entry.path, destination, { recursive: true });
+      copied.push(entry.name);
+    }
+    io.out(`copied ${String(copied.length)} skills into ${target}`);
+    if (skipped.length > 0) {
+      io.out(`skipped ${String(skipped.length)} that already existed (use --force to overwrite)`);
+    }
+    io.out('these are read automatically at start; no config change needed');
+    return 0;
+  }
+
+  io.err(`unknown skills command ${action}`);
+  io.err('usage: tiennk skills list');
+  io.err('       tiennk skills detect');
+  io.err('       tiennk skills search <words>');
+  io.err('       tiennk skills add <dir> | remove <dir>');
+  io.err('       tiennk skills import <dir> [--force]');
+  return 2;
+}
+
 async function runModelCommand(
   command: CliCommand,
   io: CliIo,
@@ -585,6 +801,7 @@ export async function runCli(options: CliOptions): Promise<number> {
   const config: AgentCoreConfig = {
     provider: command.provider ?? loaded?.provider ?? 'deepseek',
     model: command.model !== '' ? command.model : (loaded?.model ?? 'deepseek-flash'),
+    ...(loaded?.skillSources === undefined ? {} : { skillSources: loaded.skillSources }),
     ...(loaded?.baseUrl === undefined ? {} : { baseUrl: loaded.baseUrl }),
     ...(loaded?.kind === undefined ? {} : { kind: loaded.kind }),
     ...(loaded?.apiKeyEnv === undefined ? {} : { apiKeyEnv: loaded.apiKeyEnv }),
@@ -603,18 +820,21 @@ export async function runCli(options: CliOptions): Promise<number> {
     io.out(ids.length === 0 ? `No sessions in ${command.sessionRoot}` : ids.join('\n'));
     return 0;
   }
-  if (command.kind === 'model') {
-    return await runModelCommand(command, io, shellEnv, storedEnv, config);
-  }
-  if (command.kind === 'key') {
-    return await runKeyCommand(command, io, shellEnv, storedEnv);
-  }
   if (command.errors.length > 0) {
     for (const error of command.errors) {
       io.err(`error: ${error}`);
     }
     io.err('run with --help for usage');
     return 2;
+  }
+  if (command.kind === 'model') {
+    return await runModelCommand(command, io, shellEnv, storedEnv, config);
+  }
+  if (command.kind === 'key') {
+    return await runKeyCommand(command, io, shellEnv, storedEnv);
+  }
+  if (command.kind === 'skills') {
+    return await runSkillsCommand(command, io, shellEnv, config);
   }
   if (!(await pathExists(command.workspace))) {
     io.err(`error: workspace ${command.workspace} does not exist`);
@@ -665,6 +885,11 @@ export async function runCli(options: CliOptions): Promise<number> {
     maxSteps: command.maxSteps,
     answerer,
     ...(command.escalate ? { outsideWorkspace: 'ask' as const } : {}),
+    skillSources: defaultSkillSources(
+      command.workspace,
+      config.skillSources ?? [],
+      join(configPaths(shellEnv).dir, 'skills'),
+    ),
     onDelta: (delta) => {
       if (delta.type === 'text') {
         io.write(delta.text);
@@ -700,6 +925,11 @@ export async function runCli(options: CliOptions): Promise<number> {
       maxSteps: command.maxSteps,
       answerer,
       ...(command.escalate ? { outsideWorkspace: 'ask' as const } : {}),
+      skillSources: defaultSkillSources(
+      command.workspace,
+      config.skillSources ?? [],
+      join(configPaths(shellEnv).dir, 'skills'),
+    ),
       onDelta: (delta) => {
         if (delta.type === 'text') {
           io.write(delta.text);
@@ -761,6 +991,26 @@ export async function runCli(options: CliOptions): Promise<number> {
     }
     if (line === '/cost') {
       io.out(runtime.formatReport());
+      continue;
+    }
+    if (line === '/skills' || line.startsWith('/skills ')) {
+      const query = line.slice('/skills'.length).trim();
+      if (query === '') {
+        for (const summary of runtime.skills.sourceSummaries()) {
+          io.out(
+            `  ${summary.scope.padEnd(7)} ${String(summary.count).padStart(4)} skills  ${summary.root}`,
+          );
+        }
+        io.out(`${String(runtime.skills.catalog().length)} skills available (load with the skill tool)`);
+      } else {
+        const matches = runtime.skills.search(query, 30);
+        if (matches.length === 0) {
+          io.out(`no skill matches ${query}`);
+        }
+        for (const entry of matches) {
+          io.out(`  ${entry.name} [${entry.category}] — ${entry.description}`);
+        }
+      }
       continue;
     }
     if (line === '/compact') {

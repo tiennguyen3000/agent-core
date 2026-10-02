@@ -105,6 +105,12 @@ export interface AgentCoreConfig {
   /** Preset id, or a custom id when `baseUrl` and `kind` are stored too. */
   readonly provider: string;
   readonly model: string;
+  /**
+   * Extra skill directories to inherit from, e.g. another agent's skill folder
+   * (`tiennk skills add ~/.hermes/skills`). Project directories always come
+   * first and shadow these.
+   */
+  readonly skillSources?: readonly string[];
   /** Overrides the preset endpoint (self-hosted, proxy, local server). */
   readonly baseUrl?: string;
   readonly kind?: ProviderKind;
@@ -165,9 +171,13 @@ export async function loadConfig(
     if (provider === undefined || model === undefined) {
       return undefined;
     }
+    const skillSources = Array.isArray(record.skillSources)
+      ? record.skillSources.filter((entry): entry is string => typeof entry === 'string')
+      : [];
     return {
       provider,
       model,
+      ...(skillSources.length > 0 ? { skillSources } : {}),
       ...(typeof record.baseUrl === 'string' ? { baseUrl: record.baseUrl } : {}),
       ...(record.kind === 'anthropic' || record.kind === 'openai-compatible'
         ? { kind: record.kind }

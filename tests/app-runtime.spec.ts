@@ -88,6 +88,7 @@ describe('agent runtime', () => {
       'job_list',
       'job_output',
       'skill',
+      'skill_search',
       'subagent',
     ]);
   });
