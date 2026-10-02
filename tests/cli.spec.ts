@@ -315,6 +315,79 @@ describe('cli', () => {
     expect(io.text()).toBe('second');
   });
 
+  it('exits cleanly when stdin closes instead of crashing', async () => {
+    const workspace = await tmp();
+    const sessionRoot = await tmp();
+    const io = harness();
+    const closed = (): never => {
+      const error = new Error('readline was closed') as Error & { code: string };
+      error.code = 'ERR_USE_AFTER_CLOSE';
+      throw error;
+    };
+    const provider = new FakeProvider([textScript('first', { inputTokens: 5, outputTokens: 5 })]);
+
+    const code = await runCli({
+      argv: ['--workspace', workspace, '--session-root', sessionRoot, '--session', 'eof'],
+      io: { ...io.io, prompt: async () => closed() },
+      env: {},
+      provider,
+    });
+
+    expect(code).toBe(0);
+    expect(io.all()).toContain('Tokens  input 0 (cache read 0)');
+  });
+
+  it('fails closed when stdin closes while waiting for approval', async () => {
+    const workspace = await tmp();
+    const sessionRoot = await tmp();
+    const io = harness();
+    const questions: string[] = [];
+    const provider = new FakeProvider([
+      {
+        deltas: [
+          {
+            type: 'tool_call',
+            index: 0,
+            id: 'c1',
+            name: 'fs_write',
+            argsJsonDelta: JSON.stringify({ path: '/tmp/outside-eof.txt', content: 'x' }),
+          },
+          { type: 'stop', reason: 'tool_calls' },
+        ],
+      },
+      textScript('gave up safely'),
+    ]);
+
+    const code = await runCli({
+      argv: [
+        '--workspace',
+        workspace,
+        '--session-root',
+        sessionRoot,
+        '--session',
+        'eof-approval',
+        '--escalate',
+        'write outside',
+      ],
+      io: {
+        ...io.io,
+        prompt: async (question: string) => {
+          questions.push(question);
+          const error = new Error('readline was closed') as Error & { code: string };
+          error.code = 'ERR_USE_AFTER_CLOSE';
+          throw error;
+        },
+      },
+      env: {},
+      provider,
+    });
+
+    expect(code).toBe(0);
+    expect(questions[0]).toContain('Approve write /tmp/outside-eof.txt?');
+    expect(io.all()).toContain('✗ fs_write: E_APPROVAL_DENIED');
+    expect(io.all()).toContain('gave up safely');
+  });
+
   it('reports a failed turn with a non-zero exit code', async () => {
     const workspace = await tmp();
     const sessionRoot = await tmp();

@@ -233,19 +233,91 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * `readline.question` throws this once stdin has ended. A closed pipe, a
+ * `< /dev/null` run or a scripted session without `/quit` must end the REPL
+ * cleanly, and an approval waiting on that stdin must fail closed — never a
+ * stack trace.
+ */
+function isInputClosed(error: unknown): boolean {
+  return error instanceof Error && (error as { code?: string }).code === 'ERR_USE_AFTER_CLOSE';
+}
+
+function inputClosedError(): Error & { code: string } {
+  const error = new Error('readline was closed') as Error & { code: string };
+  error.code = 'ERR_USE_AFTER_CLOSE';
+  return error;
+}
+
+interface PendingLine {
+  readonly resolve: (line: string) => void;
+  readonly reject: (error: Error) => void;
+}
+
+/**
+ * A piped stdin can be consumed and closed before the first `question()` call,
+ * which would silently drop every scripted line. Queue the lines instead, and
+ * let the caller ask for them one at a time.
+ */
+function createLineReader(
+  terminal: ReturnType<typeof createInterface>,
+): (question: string) => Promise<string> {
+  const pending: string[] = [];
+  const waiters: PendingLine[] = [];
+  let closed = false;
+
+  terminal.on('line', (line: string) => {
+    const waiter = waiters.shift();
+    if (waiter === undefined) {
+      pending.push(line);
+      return;
+    }
+    waiter.resolve(line);
+  });
+  terminal.on('close', () => {
+    closed = true;
+    for (const waiter of waiters.splice(0)) {
+      waiter.reject(inputClosedError());
+    }
+  });
+
+  return async () => {
+    const queued = pending.shift();
+    if (queued !== undefined) {
+      return queued;
+    }
+    if (closed) {
+      throw inputClosedError();
+    }
+    return await new Promise<string>((resolve, reject) => {
+      waiters.push({ resolve, reject });
+    });
+  };
+}
+
 export async function runCli(options: CliOptions): Promise<number> {
   const env = options.env ?? process.env;
   const terminal =
     options.io?.prompt === undefined
       ? createInterface({ input: process.stdin, output: process.stdout })
       : undefined;
+  // On a real terminal let readline draw the prompt; on a pipe or a file, read
+  // queued lines so scripted sessions are not lost to the EOF race.
+  const piped = terminal !== undefined && process.stdin.isTTY !== true
+    ? createLineReader(terminal)
+    : undefined;
   const io: CliIo = {
     out: options.io?.out ?? ((line) => process.stdout.write(`${line}\n`)),
     write: options.io?.write ?? ((chunk) => process.stdout.write(chunk)),
     err: options.io?.err ?? ((line) => process.stderr.write(`${line}\n`)),
     prompt:
       options.io?.prompt ??
-      (async (question) => await (terminal?.question(question) ?? Promise.resolve(''))),
+      (async (question) => {
+        if (piped !== undefined) {
+          return await piped(question);
+        }
+        return await (terminal?.question(question) ?? '');
+      }),
   };
 
   const command = parseArgs(options.argv, env, options.cwd ?? process.cwd());
@@ -291,8 +363,16 @@ export async function runCli(options: CliOptions): Promise<number> {
   const answerer = command.yes
     ? async (): Promise<boolean> => true
     : async (request: { action: Action }): Promise<boolean> => {
-        const answer = await io.prompt(`Approve ${describeAction(request.action)}? [y/N] `);
-        return /^y(es)?$/i.test(answer.trim());
+        try {
+          const answer = await io.prompt(`Approve ${describeAction(request.action)}? [y/N] `);
+          return /^y(es)?$/i.test(answer.trim());
+        } catch (error) {
+          // No human on the other end: deny rather than crash (fail closed).
+          if (isInputClosed(error)) {
+            return false;
+          }
+          throw error;
+        }
       };
 
   let runtime = await createAgentRuntime({
@@ -379,7 +459,17 @@ export async function runCli(options: CliOptions): Promise<number> {
   io.out('Type a task, or /help for commands.');
 
   for (;;) {
-    const line = (await io.prompt('\n> ')).trim();
+    let line: string;
+    try {
+      line = (await io.prompt('\n> ')).trim();
+    } catch (error) {
+      // End of stdin (piped script, `< /dev/null`): stop the REPL, keep the report.
+      if (isInputClosed(error)) {
+        io.out('');
+        break;
+      }
+      throw error;
+    }
     if (line.length === 0) {
       continue;
     }
