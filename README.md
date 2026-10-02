@@ -15,6 +15,23 @@ pnpm build         # tsc -p tsconfig.build.json -> dist/
 pnpm verify:pack   # build rồi chạy thử cả dist/ lẫn bin/
 ```
 
+## Cài trên Windows
+
+Windows 10/11, PowerShell — chi tiết đầy đủ và bảng lỗi ở [docs/windows.md](docs/windows.md):
+
+```powershell
+winget install OpenJS.NodeJS.LTS      # rồi MỞ LẠI PowerShell
+npm i -g pnpm@12.3.4
+git clone https://github.com/tiennguyen3000/agent-core.git
+cd agent-core ; pnpm install ; pnpm build ; npm i -g .
+tiennk key deepseek                   # dán key, ký tự ẩn
+tiennk
+```
+
+Khác macOS/Linux: shell của tool `bash` là `cmd.exe` (dùng `dir`/`type`/`findstr`, không có
+`ls`/`cat`/`grep`), kill job nền bằng `taskkill /T`, và sandbox shell không có trên Windows.
+CI chạy trên cả `windows-latest` — xem `.github/workflows/ci.yml`.
+
 ## Cài như lệnh toàn cục
 
 ```bash

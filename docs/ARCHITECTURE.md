@@ -247,6 +247,29 @@ lời cho prompt duyệt, xem được đúng câu hỏi đã hỏi, và chạy 
 reasoning) nhân với bảng giá theo model; model không có trong bảng thì nói thẳng là "unknown" chứ
 không bịa ra $0.
 
+## Đa nền tảng (Windows)
+
+Bốn chỗ thật sự khác nhau giữa các hệ điều hành, tất cả đều là nhánh tường minh chứ không phải
+`if` rải rác:
+
+| Chỗ | POSIX | Windows |
+|---|---|---|
+| `shell/bash.ts` | `bash -lc` | `cmd.exe /d /s /c` (`ComSpec`) |
+| `jobs/registry.ts` | `process.kill(-pid)` giết cả nhóm | `taskkill /PID <pid> /T /F` |
+| `mcp/client.ts` | spawn argv trực tiếp | qua shell, vì server thường là shim `.cmd` |
+| `policy/sandbox.ts` | so tiền tố chuỗi cũng đủ | `path.relative`: không phân biệt `\` `/` và hoa/thường |
+
+`policy/sandbox.ts` là bài học đáng nhớ: kiểm tra containment bằng
+`absolute.startsWith(root + '/')` đúng trên POSIX nhưng **sai hoàn toàn trên Windows** (con của
+workspace nối bằng `\`), khiến mọi lệnh ghi file bị từ chối. Dùng `path.relative` là cách duy nhất
+đúng cho cả hai.
+
+Để test được nhánh của hệ khác ngay trên máy đang phát triển, `platform` là tham số inject được ở cả
+ba module trên, và `tests/windows-branches.spec.ts` khẳng định `taskkill`, shell Windows và shim
+`.cmd` **trên macOS**. CI chạy thêm `windows-latest` thật (`.github/workflows/ci.yml`).
+
+Hướng dẫn cài trên Windows: [`docs/windows.md`](windows.md).
+
 ## Quy ước
 
 - Mọi import nội bộ dùng đuôi `.js` (NodeNext ESM).
