@@ -54,6 +54,10 @@ export interface McpStdioClientOptions {
   readonly envPassthrough?: readonly string[];
   readonly requestTimeoutMs?: number;
   readonly spawnImpl?: typeof nodeSpawn;
+  /** Override how the server is launched; defaults to a shell on Windows only. */
+  readonly shell?: boolean;
+  /** Injectable so the Windows default is testable anywhere. */
+  readonly platform?: NodeJS.Platform;
   /** Injectable timer so request timeouts can be driven in tests. */
   readonly schedule?: (fn: () => void, ms: number) => () => void;
 }
@@ -104,9 +108,15 @@ export function createMcpStdioClient(options: McpStdioClientOptions): McpClient 
     }
   }
 
+  // On Windows an MCP server is usually a `.cmd` shim (`npx`, `uvx`), which
+  // cannot be spawned directly since Node 18.20/20.12; routing through the
+  // command interpreter is the documented workaround. Elsewhere spawning the
+  // argv directly keeps quoting unambiguous.
+  const useShell = options.shell ?? (options.platform ?? process.platform) === 'win32';
   const child = spawnImpl(options.command, [...(options.args ?? [])], {
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     env: childEnv,
+    shell: useShell,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 

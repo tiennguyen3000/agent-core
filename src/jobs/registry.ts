@@ -50,6 +50,8 @@ export interface ProcessJobRegistryOptions {
   readonly schedule?: (fn: () => void, ms: number) => () => void;
   readonly now?: () => number;
   readonly spawnImpl?: typeof nodeSpawn;
+  /** Injectable so the Windows branches are exercised on any platform. */
+  readonly platform?: NodeJS.Platform;
 }
 
 interface JobRecord {
@@ -126,10 +128,38 @@ export function createProcessJobRegistry(
     return record;
   };
 
+  /**
+   * Windows has no process groups and `child.kill` only reaches the immediate
+   * child, so `cmd /c a | b` would leave grandchildren running. `taskkill /T`
+   * walks the tree; its own failure falls back to the direct signal.
+   */
+  const platform = options.platform ?? process.platform;
+
+  const killTreeOnWindows = (pid: number): boolean => {
+    try {
+      const killer = (options.spawnImpl ?? nodeSpawn)('taskkill', [
+        '/PID',
+        String(pid),
+        '/T',
+        '/F',
+      ], { stdio: 'ignore' });
+      killer.on('error', () => undefined);
+      killer.unref();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const signalProcess = (record: JobRecord, signal: NodeJS.Signals): void => {
     const pid = record.child.pid;
+    if (pid !== undefined && platform === 'win32') {
+      if (killTreeOnWindows(pid)) {
+        return;
+      }
+    }
     try {
-      if (pid !== undefined && process.platform !== 'win32') {
+      if (pid !== undefined && platform !== 'win32') {
         // Negative pid targets the group, so `bash -c "a | b"` dies whole.
         process.kill(-pid, signal);
         return;
@@ -182,7 +212,7 @@ export function createProcessJobRegistry(
         env: childEnv,
         shell: true,
         // Own process group on POSIX so the whole command tree can be killed.
-        detached: process.platform !== 'win32',
+        detached: platform !== 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 

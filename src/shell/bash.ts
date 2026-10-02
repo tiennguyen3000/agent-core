@@ -26,6 +26,8 @@ export interface BashShellRunnerOptions {
   readonly killGraceMs?: number;
   readonly schedule?: (fn: () => void, ms: number) => () => void;
   readonly spawnImpl?: typeof nodeSpawn;
+  /** Injectable so the Windows shell choice is testable anywhere. */
+  readonly platform?: NodeJS.Platform;
 }
 
 function signalProcess(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -47,7 +49,13 @@ function signalProcess(child: ChildProcess, signal: NodeJS.Signals): void {
 
 export function createBashShellRunner(options: BashShellRunnerOptions = {}): ShellRunner {
   const spawnImpl = options.spawnImpl ?? nodeSpawn;
-  const shell = options.shell ?? process.env.SHELL ?? '/bin/bash';
+  const platform = options.platform ?? process.platform;
+  // Windows has cmd.exe, not bash: the same runner works, the flags differ.
+  const shell =
+    options.shell ??
+    (platform === 'win32'
+      ? (process.env.ComSpec ?? 'cmd.exe')
+      : (process.env.SHELL ?? '/bin/bash'));
   const maxOutputChars = options.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   const schedule =
@@ -88,7 +96,7 @@ export function createBashShellRunner(options: BashShellRunnerOptions = {}): She
       const child = spawnImpl(file, [...args], {
         cwd: execOptions.cwd,
         env: childEnv,
-        detached: process.platform !== 'win32',
+        detached: platform !== 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -139,7 +147,12 @@ export function createBashShellRunner(options: BashShellRunnerOptions = {}): She
   };
 
   return {
-    exec: (command, execOptions) => run(shell, ['-lc', command], execOptions),
+    exec: (command, execOptions) =>
+      run(
+        shell,
+        platform === 'win32' ? ['/d', '/s', '/c', command] : ['-lc', command],
+        execOptions,
+      ),
     execArgv: (file, args, execOptions) => run(file, args, execOptions),
   };
 }
