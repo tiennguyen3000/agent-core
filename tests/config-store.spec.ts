@@ -30,7 +30,9 @@ async function home(): Promise<Record<string, string>> {
 
 describe('config paths and presets', () => {
   it('honours AGENT_CORE_HOME and otherwise uses the home directory', () => {
-    expect(configPaths({ AGENT_CORE_HOME: '/tmp/x' }).configFile).toBe('/tmp/x/config.json');
+    expect(configPaths({ AGENT_CORE_HOME: '/tmp/x' }).configFile).toBe(
+      join('/tmp/x', 'config.json'),
+    );
     // Built with join, so the assertion holds on Windows too.
     expect(configPaths({}).configFile).toBe(join(homedir(), '.agent-core', 'config.json'));
     expect(configPaths({}).envFile).toBe(join(homedir(), '.agent-core', '.env'));

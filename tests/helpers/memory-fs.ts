@@ -33,9 +33,13 @@ export interface MemoryFsOptions {
   readonly dirs?: readonly string[];
 }
 
-/** Backslashes never belong in a virtual path. */
+/**
+ * A real Windows absolute path carries a drive (`D:\ws\a.txt`) while the
+ * virtual filesystem is rooted at `/ws`, so the drive is dropped and both
+ * spellings address the same file.
+ */
 function toPosix(value: string): string {
-  return value.replace(/\\/g, '/');
+  return value.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/');
 }
 
 /** Joins and collapses `.`/`..` without touching the platform's separators. */

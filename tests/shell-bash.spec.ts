@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createBashShellRunner } from '../src/index.js';
 import type { BashShellRunnerOptions, ShellRunner } from '../src/index.js';
+import { LONG_RUNNING_COMMAND, PRINT_CWD_COMMAND } from './helpers/process.js';
 
 const cwd = process.cwd();
 
@@ -41,7 +42,7 @@ describe('bash shell runner', () => {
   });
 
   it('runs in the requested working directory', async () => {
-    const result = await runner().exec('node -e "process.stdout.write(process.cwd())"', {
+    const result = await runner().exec(PRINT_CWD_COMMAND, {
       cwd,
       signal: new AbortController().signal,
     });
@@ -51,7 +52,7 @@ describe('bash shell runner', () => {
 
   it('kills the command when the signal aborts and only then resolves', async () => {
     const controller = new AbortController();
-    const pending = runner().exec('echo started && node -e "setTimeout(()=>{},30000)"', {
+    const pending = runner().exec(`echo started && ${LONG_RUNNING_COMMAND}`, {
       cwd,
       signal: controller.signal,
     });

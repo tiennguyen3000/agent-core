@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createProcessJobRegistry } from '../src/index.js';
 import type { JobRegistry, ProcessJobRegistryOptions } from '../src/index.js';
 import { processAlive, untilAsync } from './helpers/process.js';
+import { LONG_RUNNING_COMMAND, PRINT_CWD_COMMAND } from './helpers/process.js';
 
 const registrys: JobRegistry[] = [];
 const cwd = process.cwd();
@@ -68,7 +69,7 @@ describe('process job registry', () => {
   it('runs in the requested working directory', async () => {
     const registry = make();
 
-    const text = await run(registry, 'node -e "process.stdout.write(process.cwd())"');
+    const text = await run(registry, PRINT_CWD_COMMAND);
 
     expect(text).toContain(cwd);
   });
@@ -110,7 +111,7 @@ describe('process job registry', () => {
     const registry = make();
 
     // `exec` replaces the shell, so the reported pid is the sleeping process.
-    const { jobId } = await registry.spawn('echo started && node -e "setTimeout(()=>{},30000)"', { cwd });
+    const { jobId } = await registry.spawn(`echo started && ${LONG_RUNNING_COMMAND}`, { cwd });
     await untilAsync(() => (registry.read(jobId)?.text ?? '').includes('started'), 'the job started');
 
     const pid = registry.snapshot(jobId)?.pid;
@@ -168,7 +169,7 @@ describe('process job registry', () => {
       },
     });
 
-    const { jobId } = await registry.spawn('node -e "setTimeout(()=>{},30000)"', { cwd });
+    const { jobId } = await registry.spawn(`${LONG_RUNNING_COMMAND}`, { cwd });
     const pending = registry.wait(jobId, { timeoutMs: 5_000 });
     await untilAsync(() => deadlines.length === 1, 'the deadline was scheduled');
     deadlines[0]?.();
@@ -192,7 +193,7 @@ describe('process job registry', () => {
 
   it('reports cancellation when the signal is already aborted', async () => {
     const registry = make();
-    const { jobId } = await registry.spawn('node -e "setTimeout(()=>{},30000)"', { cwd });
+    const { jobId } = await registry.spawn(`${LONG_RUNNING_COMMAND}`, { cwd });
     const controller = new AbortController();
     controller.abort();
 
