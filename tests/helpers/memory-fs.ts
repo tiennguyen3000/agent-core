@@ -1,8 +1,12 @@
-import { join } from 'node:path';
 import type { DirEntry, SandboxedFs } from '../../src/index.js';
 
 /**
- * In-memory filesystem port keyed by absolute paths.
+ * In-memory filesystem port keyed by absolute POSIX paths.
+ *
+ * The keys stay POSIX on every platform: the filesystem port always receives an
+ * absolute path, and on Windows `path.resolve` hands it back with backslashes,
+ * which would otherwise turn every assertion into a platform question. Paths
+ * coming in are normalised, so `/ws/a.txt` and `\\ws\\a.txt` are the same file.
  *
  * `list` behaves like a real filesystem: a known file throws `ENOTDIR` and an
  * unknown directory throws `ENOENT`, which is what lets the search tools tell
@@ -29,6 +33,29 @@ export interface MemoryFsOptions {
   readonly dirs?: readonly string[];
 }
 
+/** Backslashes never belong in a virtual path. */
+function toPosix(value: string): string {
+  return value.replace(/\\/g, '/');
+}
+
+/** Joins and collapses `.`/`..` without touching the platform's separators. */
+function virtualJoin(base: string, ...parts: readonly string[]): string {
+  const joined = [base, ...parts].map(toPosix).join('/');
+  const isAbsolute = joined.startsWith('/');
+  const segments: string[] = [];
+  for (const segment of joined.split('/')) {
+    if (segment === '' || segment === '.') {
+      continue;
+    }
+    if (segment === '..') {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return `${isAbsolute ? '/' : ''}${segments.join('/')}`;
+}
+
 function ancestorsOf(root: string, absolute: string): string[] {
   const parts = absolute.split('/');
   const result: string[] = [];
@@ -42,13 +69,13 @@ function ancestorsOf(root: string, absolute: string): string[] {
 }
 
 export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
-  const root = options.root ?? '/ws';
+  const root = toPosix(options.root ?? '/ws');
   const files = new Map<string, string>();
   const binary = new Map<string, Uint8Array>();
   const dirs = new Set<string>([root]);
 
   for (const [path, bytes] of Object.entries(options.binary ?? {})) {
-    const absolute = join(root, path);
+    const absolute = virtualJoin(root, path);
     binary.set(absolute, bytes);
     for (const dir of ancestorsOf(root, absolute)) {
       dirs.add(dir);
@@ -56,14 +83,14 @@ export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
   }
 
   for (const [path, content] of Object.entries(options.files ?? {})) {
-    const absolute = join(root, path);
+    const absolute = virtualJoin(root, path);
     files.set(absolute, content);
     for (const dir of ancestorsOf(root, absolute)) {
       dirs.add(dir);
     }
   }
   for (const path of options.dirs ?? []) {
-    const absolute = join(root, path);
+    const absolute = virtualJoin(root, path);
     dirs.add(absolute);
     for (const dir of ancestorsOf(root, absolute)) {
       dirs.add(dir);
@@ -85,7 +112,8 @@ export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
           content,
         ]),
       ),
-    read: async (path) => {
+    read: async (rawPath) => {
+      const path = virtualJoin(rawPath);
       if (unreadable.has(path)) {
         throw new Error(`EACCES: ${path}`);
       }
@@ -95,7 +123,8 @@ export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
       }
       return value;
     },
-    readBytes: async (path) => {
+    readBytes: async (rawPath) => {
+      const path = virtualJoin(rawPath);
       if (unreadable.has(path)) {
         throw new Error(`EACCES: ${path}`);
       }
@@ -109,14 +138,19 @@ export function memoryFs(options: MemoryFsOptions = {}): MemoryFs {
       }
       return new TextEncoder().encode(value);
     },
-    write: async (path, content) => {
+    write: async (rawPath, content) => {
+      const path = virtualJoin(rawPath);
       files.set(path, content);
       for (const dir of ancestorsOf(root, path)) {
         dirs.add(dir);
       }
     },
-    exists: async (path) => files.has(path) || binary.has(path) || dirs.has(path),
-    list: async (dir) => {
+    exists: async (rawPath) => {
+      const path = virtualJoin(rawPath);
+      return files.has(path) || binary.has(path) || dirs.has(path);
+    },
+    list: async (rawDir) => {
+      const dir = virtualJoin(rawDir);
       if (files.has(dir)) {
         throw new Error(`ENOTDIR: ${dir}`);
       }

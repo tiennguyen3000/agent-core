@@ -64,7 +64,7 @@ describe('bash tool', () => {
 
     const result = await registry.dispatch(
       'bash',
-      { command: 'exec sleep 30', run_in_background: true },
+      { command: 'node -e "setTimeout(()=>{},30000)"', run_in_background: true },
       ctx,
     );
 
@@ -84,7 +84,7 @@ describe('bash tool', () => {
 
     const pending = registry.dispatch(
       'bash',
-      { command: 'echo started; exec sleep 30', timeout_ms: 5_000 },
+      { command: 'echo started && node -e "setTimeout(()=>{},30000)"', timeout_ms: 5_000 },
       ctx,
     );
     await untilAsync(() => deadlines.length === 1, 'the deadline was scheduled');
@@ -105,7 +105,7 @@ describe('bash tool', () => {
     const controller = new AbortController();
     const ctx = makeCtx({ workdir: process.cwd(), jobs, signal: controller.signal });
 
-    const pending = registry.dispatch('bash', { command: 'exec sleep 30' }, ctx);
+    const pending = registry.dispatch('bash', { command: 'node -e "setTimeout(()=>{},30000)"' }, ctx);
     await untilAsync(() => jobs.list().length === 1, 'the command started');
     controller.abort();
 
@@ -131,7 +131,7 @@ describe('job tools', () => {
   it('follows a background job with job_output and stops it with job_kill', async () => {
     const { registry, ctx, jobs } = setup();
 
-    await registry.dispatch('bash', { command: 'echo first; exec sleep 30', run_in_background: true }, ctx);
+    await registry.dispatch('bash', { command: 'echo first && node -e "setTimeout(()=>{},30000)"', run_in_background: true }, ctx);
     await untilAsync(
       () => (jobs.read('job-1')?.text ?? '').includes('first'),
       'the background job produced output',

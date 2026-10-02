@@ -41,7 +41,7 @@ describe('bash shell runner', () => {
   });
 
   it('runs in the requested working directory', async () => {
-    const result = await runner().exec('pwd', {
+    const result = await runner().exec('node -e "process.stdout.write(process.cwd())"', {
       cwd,
       signal: new AbortController().signal,
     });
@@ -51,7 +51,7 @@ describe('bash shell runner', () => {
 
   it('kills the command when the signal aborts and only then resolves', async () => {
     const controller = new AbortController();
-    const pending = runner().exec('echo started; exec sleep 30', {
+    const pending = runner().exec('echo started && node -e "setTimeout(()=>{},30000)"', {
       cwd,
       signal: controller.signal,
     });

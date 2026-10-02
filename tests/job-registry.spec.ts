@@ -68,7 +68,7 @@ describe('process job registry', () => {
   it('runs in the requested working directory', async () => {
     const registry = make();
 
-    const text = await run(registry, 'pwd');
+    const text = await run(registry, 'node -e "process.stdout.write(process.cwd())"');
 
     expect(text).toContain(cwd);
   });
@@ -110,7 +110,7 @@ describe('process job registry', () => {
     const registry = make();
 
     // `exec` replaces the shell, so the reported pid is the sleeping process.
-    const { jobId } = await registry.spawn('echo started; exec sleep 30', { cwd });
+    const { jobId } = await registry.spawn('echo started && node -e "setTimeout(()=>{},30000)"', { cwd });
     await untilAsync(() => (registry.read(jobId)?.text ?? '').includes('started'), 'the job started');
 
     const pid = registry.snapshot(jobId)?.pid;
@@ -168,7 +168,7 @@ describe('process job registry', () => {
       },
     });
 
-    const { jobId } = await registry.spawn('exec sleep 30', { cwd });
+    const { jobId } = await registry.spawn('node -e "setTimeout(()=>{},30000)"', { cwd });
     const pending = registry.wait(jobId, { timeoutMs: 5_000 });
     await untilAsync(() => deadlines.length === 1, 'the deadline was scheduled');
     deadlines[0]?.();
@@ -192,7 +192,7 @@ describe('process job registry', () => {
 
   it('reports cancellation when the signal is already aborted', async () => {
     const registry = make();
-    const { jobId } = await registry.spawn('exec sleep 30', { cwd });
+    const { jobId } = await registry.spawn('node -e "setTimeout(()=>{},30000)"', { cwd });
     const controller = new AbortController();
     controller.abort();
 

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFile, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   PROVIDER_PRESETS,
   configPaths,
@@ -29,8 +31,9 @@ async function home(): Promise<Record<string, string>> {
 describe('config paths and presets', () => {
   it('honours AGENT_CORE_HOME and otherwise uses the home directory', () => {
     expect(configPaths({ AGENT_CORE_HOME: '/tmp/x' }).configFile).toBe('/tmp/x/config.json');
-    expect(configPaths({}).configFile.endsWith('/.agent-core/config.json')).toBe(true);
-    expect(configPaths({}).envFile.endsWith('/.agent-core/.env')).toBe(true);
+    // Built with join, so the assertion holds on Windows too.
+    expect(configPaths({}).configFile).toBe(join(homedir(), '.agent-core', 'config.json'));
+    expect(configPaths({}).envFile).toBe(join(homedir(), '.agent-core', '.env'));
   });
 
   it('knows the providers this build can speak', () => {
@@ -126,7 +129,10 @@ describe('credential file', () => {
       ANTHROPIC_API_KEY: 'sk-two',
     });
     const info = await stat(configPaths(env).envFile);
-    expect(info.mode & 0o077).toBe(0);
+    if (process.platform !== 'win32') {
+      // Windows has no POSIX mode bits; the file still holds only the user's data.
+      expect(info.mode & 0o077).toBe(0);
+    }
   });
 
   it('lets an exported variable win over the stored file', async () => {

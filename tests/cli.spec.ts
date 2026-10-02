@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { FakeProvider, parseArgs, runCli } from '../src/index.js';
 import { makeTmpDir, removeTmpDir } from './helpers/tmp-dir.js';
 
@@ -92,7 +92,7 @@ describe('parseArgs', () => {
     expect(command).toMatchObject({
       kind: 'run',
       task: 'fix the bug',
-      workspace: '/tmp/x',
+      workspace: resolve('/tmp/x'),
       model: 'deepseek-v4-pro',
       mode: 'read-only',
       yes: false,

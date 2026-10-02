@@ -26,7 +26,11 @@ describe('packaging wiring', () => {
     const absolute = join(root, binPath ?? '');
     const info = await stat(absolute);
     expect(info.isFile()).toBe(true);
-    expect(info.mode & 0o111).toBeGreaterThan(0);
+    if (process.platform !== 'win32') {
+      // Windows has no exec bit; npm writes a `tiennk.cmd` shim from the bin
+      // field instead, which is what makes the command runnable there.
+      expect(info.mode & 0o111).toBeGreaterThan(0);
+    }
 
     const contents = await readFile(absolute, 'utf8');
     expect(contents.startsWith('#!/usr/bin/env node')).toBe(true);
